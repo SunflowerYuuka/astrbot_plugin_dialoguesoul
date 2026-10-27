@@ -12,6 +12,7 @@ class Database:
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._lock = asyncio.Lock()
+        self._closed = False
 
     async def initialize(self):
         async with self._lock:
@@ -49,4 +50,7 @@ class Database:
 
     async def close(self):
         async with self._lock:
+            if self._closed:
+                return
             await asyncio.to_thread(self._conn.close)
+            self._closed = True

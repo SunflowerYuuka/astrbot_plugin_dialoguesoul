@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import json
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from dialoguesoul.models import ChatMessage
 
 from .db import Database
 
 
+@runtime_checkable
 class HistoryRepository(Protocol):
     async def append(self, message: ChatMessage) -> None: ...
     async def recent(self, platform, self_id, chat_type, chat_id, limit) -> list[ChatMessage]: ...
     async def clear(self, platform, self_id, chat_type, chat_id) -> int: ...
     async def count(self, platform, self_id, chat_type, chat_id) -> int: ...
+    async def prune_before(self, cutoff: float) -> int: ...
+    async def prune(self, platform, self_id, chat_type, chat_id, keep_last: int) -> int: ...
 
 
 class SqliteHistoryRepository:
@@ -40,7 +43,7 @@ class SqliteHistoryRepository:
             WHERE platform=? AND self_id=? AND chat_type=? AND chat_id=?
             ORDER BY timestamp DESC, id DESC LIMIT ?
             """,
-            (platform, self_id, chat_type, chat_id, max(0, limit)),
+            (platform, self_id, chat_type, chat_id, max(0, int(limit or 0))),
         )
         rows.reverse()
         return [

@@ -15,7 +15,7 @@ from dialoguesoul.context.components import (
 )
 from dialoguesoul.models import ChatKey, ChatMessage
 from dialoguesoul.storage.db import Database
-from dialoguesoul.storage.history import SqliteHistoryRepository
+from dialoguesoul.storage.history import HistoryRepository, SqliteHistoryRepository
 
 
 class StorageTest(unittest.IsolatedAsyncioTestCase):
@@ -57,6 +57,10 @@ class StorageTest(unittest.IsolatedAsyncioTestCase):
             await self.repo.append(self._msg(text, 1.0))
         rows = await self.repo.recent("p", "bot", "group", "1", 10)
         self.assertEqual([r.components[0]["text"] for r in rows], ["a", "b", "c"])
+
+    async def test_recent_treats_none_limit_as_zero(self):
+        await self.repo.append(self._msg("a", 1.0))
+        self.assertEqual(await self.repo.recent("p", "bot", "group", "1", None), [])
 
     async def test_recent_is_scoped_to_one_chat(self):
         await self.repo.append(self._msg("a", 1.0))
@@ -120,6 +124,19 @@ class StorageTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(await self.repo.count("p", "bot", "group", "1"), 20)
 
+    async def test_initialize_sets_wal_and_busy_timeout(self):
+        journal = await self.db.fetchone("PRAGMA journal_mode")
+        timeout = await self.db.fetchone("PRAGMA busy_timeout")
+        self.assertEqual(str(journal["journal_mode"]).lower(), "wal")
+        self.assertEqual(int(timeout["timeout"]), 5000)
+
+    async def test_repository_satisfies_history_protocol(self):
+        self.assertIsInstance(self.repo, HistoryRepository)
+
+    async def test_close_is_idempotent(self):
+        await self.db.close()
+        await self.db.close()
+
 
 class _Event:
     def __init__(self, private_chat, sender_id="u1", group_id="g1"):
@@ -167,9 +184,10 @@ class _PlainComponent:
 class _ImageComponent:
     type = "image"
 
-    def __init__(self, url=None, file=None):
+    def __init__(self, url=None, file=None, path=None):
         self.url = url
         self.file = file
+        self.path = path
 
 
 class _AtComponent:
@@ -180,12 +198,20 @@ class _AtComponent:
         self.name = None
 
 
+class _NodeComponent:
+    type = "node"
+
+    def __init__(self, chain=None):
+        self.chain = chain or []
+
+
 class _ForwardComponent:
     type = "forward"
 
-    def __init__(self, forward_id, chain=None):
+    def __init__(self, forward_id, chain=None, nodes=None):
         self.id = forward_id
         self.chain = chain or []
+        self.nodes = nodes or []
 
 
 class ComponentsTest(unittest.TestCase):
@@ -206,6 +232,29 @@ class ComponentsTest(unittest.TestCase):
     def test_component_to_dict_falls_back_to_unknown_type(self):
         self.assertEqual(component_to_dict(object()), {"type": "unknown"})
 
+    def test_component_to_dict_keeps_path(self):
+        self.assertEqual(
+            component_to_dict(_ImageComponent(path="/tmp/a.png")),
+            {"type": "image", "path": "/tmp/a.png"},
+        )
+
+    def test_component_to_dict_recurses_into_nodes(self):
+        forward = _ForwardComponent("f2", nodes=[_NodeComponent([_PlainComponent("hi")])])
+        self.assertEqual(
+            component_to_dict(forward),
+            {
+                "type": "forward", "id": "f2",
+                "nodes": [{"type": "node", "chain": [{"type": "plain", "text": "hi"}]}],
+            },
+        )
+
+    def test_component_to_dict_passes_dict_nodes_through(self):
+        forward = _ForwardComponent("f3", nodes=[{"type": "plain", "text": "hi"}])
+        self.assertEqual(
+            component_to_dict(forward),
+            {"type": "forward", "id": "f3", "nodes": [{"type": "plain", "text": "hi"}]},
+        )
+
     def test_collect_text(self):
         components = [
             {"type": "plain", "text": "a"},
@@ -222,6 +271,25 @@ class ComponentsTest(unittest.TestCase):
             {"type": "image", "url": "http://x/2.png"},
         ]
         self.assertEqual(collect_image_urls(components), ["http://x/1.png", "http://x/2.png"])
+
+    def test_collect_image_urls_falls_back_to_file_then_path(self):
+        components = [
+            {"type": "image", "file": "a.png"},
+            {"type": "image", "path": "/tmp/b.png"},
+            {"type": "image", "url": "http://x/1.png", "file": "c.png"},
+        ]
+        self.assertEqual(
+            collect_image_urls(components), ["a.png", "/tmp/b.png", "http://x/1.png"]
+        )
+
+    def test_collect_image_urls_dedupes_keeping_first_occurrence_order(self):
+        components = [
+            {"type": "image", "url": "http://x/2.png"},
+            {"type": "image", "url": "http://x/1.png"},
+            {"type": "image", "url": "http://x/2.png"},
+            {"type": "image", "file": "http://x/1.png"},
+        ]
+        self.assertEqual(collect_image_urls(components), ["http://x/2.png", "http://x/1.png"])
 
     def test_collect_forward_ids(self):
         components = [

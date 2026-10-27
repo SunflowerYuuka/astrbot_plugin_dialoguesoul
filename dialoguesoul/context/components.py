@@ -1,15 +1,27 @@
 from __future__ import annotations
 
+_SCALAR_FIELDS = ("text", "url", "file", "path", "id", "qq", "sender_id", "name")
+_RECURSIVE_FIELDS = ("chain", "nodes")
+_IMAGE_SOURCE_FIELDS = ("url", "file", "path")
+
 
 def component_to_dict(component) -> dict:
+    if isinstance(component, dict):
+        data = dict(component)
+        for name in _RECURSIVE_FIELDS:
+            items = data.get(name)
+            if isinstance(items, (list, tuple)):
+                data[name] = [component_to_dict(item) for item in items]
+        return data
     data = {"type": str(getattr(component, "type", "unknown") or "unknown")}
-    for name in ("text", "url", "file", "id", "qq", "sender_id", "name"):
+    for name in _SCALAR_FIELDS:
         value = getattr(component, name, None)
         if value is not None:
             data[name] = value
-    chain = getattr(component, "chain", None)
-    if chain:
-        data["chain"] = [component_to_dict(item) for item in chain]
+    for name in _RECURSIVE_FIELDS:
+        items = getattr(component, name, None)
+        if items:
+            data[name] = [component_to_dict(item) for item in items]
     return data
 
 
@@ -18,7 +30,20 @@ def collect_text(components) -> str:
 
 
 def collect_image_urls(components) -> list[str]:
-    return [str(c.get("url")) for c in components if c.get("type") == "image" and c.get("url")]
+    urls: list[str] = []
+    seen: set[str] = set()
+    for component in components:
+        if component.get("type") != "image":
+            continue
+        for name in _IMAGE_SOURCE_FIELDS:
+            value = component.get(name)
+            if value:
+                candidate = str(value)
+                if candidate not in seen:
+                    seen.add(candidate)
+                    urls.append(candidate)
+                break
+    return urls
 
 
 def collect_forward_ids(components) -> list[str]:
