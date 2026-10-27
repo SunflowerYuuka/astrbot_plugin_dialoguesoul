@@ -31,6 +31,43 @@ class ForwardRenderer:
         )
         return f"{name}: {text}"
 
+    def _nested(self, item, depth: int) -> list:
+        if depth + 1 >= self.max_depth or not isinstance(item, dict):
+            return []
+        content = item.get("content")
+        if not isinstance(content, list):
+            return []
+        nested: list = []
+        for child in content:
+            if not isinstance(child, dict):
+                continue
+            for name in ("nodes", "messages"):
+                items = child.get(name)
+                if isinstance(items, list):
+                    nested.extend(items)
+                    break
+        return nested
+
+    def _count(self, item, depth: int) -> int:
+        total = 1
+        for child in self._nested(item, depth):
+            total += self._count(child, depth + 1)
+        return total
+
+    def _lines(self, messages: list, depth: int, budget: list) -> list[str]:
+        lines: list[str] = []
+        pad = "  " * depth
+        for item in messages:
+            if budget[0] <= 0:
+                budget[1] += self._count(item, depth)
+                continue
+            budget[0] -= 1
+            lines.append(pad + self._line(item))
+            nested = self._nested(item, depth)
+            if nested:
+                lines.extend(self._lines(nested, depth + 1, budget))
+        return lines
+
     async def render(self, forward_id: str) -> str:
         try:
             payload = await asyncio.wait_for(self.fetcher(forward_id), self.timeout)
@@ -39,8 +76,8 @@ class ForwardRenderer:
         messages = payload.get("messages", []) if isinstance(payload, dict) else []
         if not isinstance(messages, list):
             messages = []
-        lines = [self._line(item) for item in messages[: self.max_nodes]]
-        text = "\n".join(lines)
-        if len(messages) > self.max_nodes:
-            text += f"\n(还有 {len(messages) - self.max_nodes} 条未显示)"
+        budget = [self.max_nodes, 0]
+        text = "\n".join(self._lines(messages, 0, budget))
+        if budget[1] > 0:
+            text += f"\n(还有 {budget[1]} 条未显示)"
         return text[: self.max_chars]

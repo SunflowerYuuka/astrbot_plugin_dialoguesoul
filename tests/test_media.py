@@ -64,6 +64,46 @@ class CaptionServiceTest(unittest.IsolatedAsyncioTestCase):
         await service.caption(["a", "b", "c", "d"], umo="u")
         self.assertLessEqual(peak, 2)
 
+    async def test_caption_dedupes_concurrent_same_url(self):
+        calls = []
+
+        async def captioner(umo, url):
+            calls.append(url)
+            await asyncio.sleep(0.05)
+            return "cat"
+
+        service = CaptionService(captioner=captioner, concurrency=3)
+        first, second = await asyncio.gather(
+            service.caption(["a"], umo="u"),
+            service.caption(["a"], umo="u"),
+        )
+        self.assertEqual(first, {"a": "cat"})
+        self.assertEqual(second, {"a": "cat"})
+        self.assertEqual(calls, ["a"])
+
+    async def test_caption_does_not_cache_failures(self):
+        calls = []
+
+        async def captioner(umo, url):
+            calls.append(url)
+            raise RuntimeError("boom")
+
+        service = CaptionService(captioner=captioner)
+        self.assertEqual(await service.caption(["bad"], umo="u"), {})
+        self.assertEqual(await service.caption(["bad"], umo="u"), {})
+        self.assertEqual(calls, ["bad", "bad"])
+
+    async def test_caption_preserves_input_order(self):
+        delays = {"c": 0.03, "a": 0.02, "b": 0.01}
+
+        async def captioner(umo, url):
+            await asyncio.sleep(delays[url])
+            return url
+
+        service = CaptionService(captioner=captioner, concurrency=3)
+        result = await service.caption(["c", "a", "b"], umo="u")
+        self.assertEqual(list(result), ["c", "a", "b"])
+
 
 class ForwardRendererTest(unittest.IsolatedAsyncioTestCase):
     async def test_forward_render(self):
@@ -105,6 +145,51 @@ class ForwardRendererTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("C: 2", text)
         self.assertNotIn("C: 3", text)
         self.assertIn("还有 3 条", text)
+
+    async def test_forward_render_expands_nested_nodes(self):
+        async def fetcher(forward_id):
+            return {
+                "messages": [
+                    {
+                        "sender": {"nickname": "A"},
+                        "content": [
+                            {"type": "text", "text": "outer"},
+                            {
+                                "type": "forward",
+                                "nodes": [
+                                    {
+                                        "sender": {"nickname": "B"},
+                                        "content": [{"type": "text", "text": "inner"}],
+                                    },
+                                    {
+                                        "sender": {"nickname": "C"},
+                                        "content": [
+                                            {
+                                                "type": "forward",
+                                                "messages": [
+                                                    {
+                                                        "sender": {"nickname": "D"},
+                                                        "content": [{"type": "text", "text": "deep"}],
+                                                    }
+                                                ],
+                                            }
+                                        ],
+                                    },
+                                ],
+                            },
+                        ],
+                    }
+                ]
+            }
+
+        text = await ForwardRenderer(fetcher, max_depth=2).render("f1")
+        self.assertIn("A: outer", text)
+        self.assertIn("B: inner", text)
+        self.assertIn("C: ", text)
+        self.assertNotIn("D: deep", text)
+
+        deeper = await ForwardRenderer(fetcher, max_depth=3).render("f1")
+        self.assertIn("D: deep", deeper)
 
 
 class SummaryServiceTest(unittest.IsolatedAsyncioTestCase):

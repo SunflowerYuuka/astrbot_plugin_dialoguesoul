@@ -13,6 +13,15 @@ class CaptionService:
         self._cache: OrderedDict[str, str] = OrderedDict()
         self._cache_size = max(0, cache_size)
         self._lock = asyncio.Lock()
+        self._inflight: dict[str, asyncio.Lock] = {}
+
+    async def _lock_for(self, url: str) -> asyncio.Lock:
+        async with self._lock:
+            lock = self._inflight.get(url)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._inflight[url] = lock
+            return lock
 
     async def _cached(self, url: str) -> str | None:
         async with self._lock:
@@ -34,10 +43,20 @@ class CaptionService:
         cached = await self._cached(url)
         if cached is not None:
             return url, cached
-        async with self._sem:
-            text = await self.captioner(umo, url)
-        await self._store(url, text)
-        return url, text
+        lock = await self._lock_for(url)
+        try:
+            async with lock:
+                cached = await self._cached(url)
+                if cached is not None:
+                    return url, cached
+                async with self._sem:
+                    text = await self.captioner(umo, url)
+                await self._store(url, text)
+                return url, text
+        finally:
+            async with self._lock:
+                if self._inflight.get(url) is lock:
+                    del self._inflight[url]
 
     async def caption(self, urls: list[str], umo: str = "") -> dict[str, str]:
         unique = list(dict.fromkeys(url for url in urls if url))
