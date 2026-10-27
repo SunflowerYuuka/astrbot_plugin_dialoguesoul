@@ -1,11 +1,12 @@
 import asyncio
+import types
 import unittest
 
 from tests._helpers import install_astrbot_stub
 
 install_astrbot_stub()
 
-from dialoguesoul.context.forwards import ForwardRenderer
+from dialoguesoul.context.forwards import ForwardRenderer, fetch_forward_payload
 from dialoguesoul.context.images import CaptionService
 from dialoguesoul.context.summary import SummaryService
 
@@ -190,6 +191,81 @@ class ForwardRendererTest(unittest.IsolatedAsyncioTestCase):
 
         deeper = await ForwardRenderer(fetcher, max_depth=3).render("f1")
         self.assertIn("D: deep", deeper)
+
+    async def test_forward_render_onebot_payload_shape(self):
+        async def fetcher(forward_id):
+            return {
+                "messages": [
+                    {
+                        "sender": {"nickname": "U", "user_id": "100"},
+                        "content": [
+                            {"type": "text", "data": {"text": "hello"}},
+                            {"type": "image", "data": {"file": "x.jpg"}},
+                        ],
+                    }
+                ]
+            }
+
+        text = await ForwardRenderer(fetcher).render("f1")
+        self.assertIn("U: hello", text)
+        self.assertIn("[图片]", text)
+
+    async def test_forward_render_unwraps_data_and_node_items(self):
+        async def fetcher(forward_id):
+            return {
+                "data": {
+                    "messages": [
+                        {
+                            "type": "node",
+                            "data": {
+                                "nickname": "A",
+                                "user_id": "1",
+                                "content": [
+                                    {"type": "text", "data": {"text": "outer"}},
+                                    {
+                                        "type": "node",
+                                        "data": {
+                                            "nickname": "B",
+                                            "user_id": "2",
+                                            "content": [
+                                                {"type": "text", "data": {"text": "inner"}}
+                                            ],
+                                        },
+                                    },
+                                ],
+                            },
+                        }
+                    ]
+                }
+            }
+
+        text = await ForwardRenderer(fetcher, max_depth=2).render("f1")
+        self.assertIn("A: outer", text)
+        self.assertIn("B: inner", text)
+
+    async def test_fetch_forward_payload_tries_call_action_variants(self):
+        class Bot:
+            def __init__(self):
+                self.calls = []
+
+            async def call_action(self, action, **params):
+                self.calls.append((action, params))
+                if params.get("message_id") == "f1":
+                    return {"messages": [{"sender": {"nickname": "U"}}]}
+                raise RuntimeError("bad params")
+
+        bot = Bot()
+        event = types.SimpleNamespace(bot=bot)
+        payload = await fetch_forward_payload(event, "f1")
+
+        self.assertEqual(payload["messages"][0]["sender"]["nickname"], "U")
+        self.assertEqual(bot.calls[0][0], "get_forward_msg")
+
+
+class FetchForwardTest(unittest.IsolatedAsyncioTestCase):
+    async def test_fetch_forward_payload_returns_empty_without_api(self):
+        event = types.SimpleNamespace()
+        self.assertEqual(await fetch_forward_payload(event, "f1"), {})
 
 
 class SummaryServiceTest(unittest.IsolatedAsyncioTestCase):

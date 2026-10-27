@@ -53,6 +53,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(cfg.get(cfg.DEFAULTS, "trigger.strategy"), "window")
         self.assertEqual(cfg.get(cfg.DEFAULTS, "trigger.window_seconds"), 30)
         self.assertEqual(cfg.get(cfg.DEFAULTS, "trigger.interest.provider_id"), "")
+        self.assertTrue(cfg.get(cfg.DEFAULTS, "trigger.interest.enabled"))
         self.assertFalse(cfg.get(cfg.DEFAULTS, "trigger.burst.enabled"))
         self.assertEqual(cfg.get(cfg.DEFAULTS, "trigger.burst.groups"), [])
         self.assertEqual(cfg.get(cfg.DEFAULTS, "trigger.burst.threshold"), 50)
@@ -60,6 +61,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(cfg.get(cfg.DEFAULTS, "decision.format"), "marker")
         self.assertEqual(cfg.get(cfg.DEFAULTS, "wake.max_replies"), 5)
         self.assertNotIn("max_messages", cfg.DEFAULTS["wake"])
+        self.assertTrue(cfg.get(cfg.DEFAULTS, "wake.final_reply_prompt"))
         self.assertFalse(cfg.get(cfg.DEFAULTS, "context.summary.enabled"))
         self.assertEqual(cfg.get(cfg.DEFAULTS, "context.summary.provider_id"), "")
         self.assertEqual(cfg.get(cfg.DEFAULTS, "context.summary.threshold"), 20)
@@ -125,6 +127,14 @@ class ConfigTest(unittest.TestCase):
             schema["context"]["items"]["image_caption"]["items"]["provider_id"]["_special"],
             "select_provider",
         )
+
+    def test_interest_switch_and_final_prompt_are_exposed(self):
+        schema = json.loads((ROOT / "_conf_schema.json").read_text("utf-8"))
+        interest = schema["trigger"]["items"]["interest"]["items"]
+        self.assertEqual(interest["enabled"]["type"], "bool")
+        self.assertTrue(interest["enabled"]["default"])
+        wake = schema["wake"]["items"]
+        self.assertEqual(wake["final_reply_prompt"]["type"], "string")
 
     def test_decision_timeout_is_not_exposed(self):
         schema = json.loads((ROOT / "_conf_schema.json").read_text("utf-8"))

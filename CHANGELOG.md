@@ -1,5 +1,18 @@
 # 更新日志
 
+## Unreleased
+
+### 新增
+
+- `trigger.interest.enabled`：兴趣判断开关，默认开启；关闭时 `interest` 策略退化为时间窗口。
+- `wake.final_reply_prompt`：唤醒会话最后一条回复的收尾提示词，可自定义，留空不注入。
+
+### 修复
+
+- 唤醒次数在 aiocqhttp 下按实际发送成功计数，发送失败不再消耗次数。
+- 合并转发拉取兼容 `bot.call_action` / `event.call_api`，并支持 OneBot 的 `data.text` 与嵌套节点结构。
+- 合并转发获取失败或为空时输出占位文本并记录警告日志。
+
 ## v1.0.0
 
 首个正式版本。

@@ -91,6 +91,17 @@ class DialoguesSoulPlugin:
             if route.kind == "ignore":
                 return
             decision = route.kind == "decision"
+            starts_session = (
+                route.wake_session is None
+                and decision
+                and cfg.get(self.config, "wake.enabled", False)
+            )
+            session_id = uuid.uuid4().hex if starts_session else ""
+            limits = (
+                self.wake.resolve_limits(event, self.config)
+                if starts_session
+                else None
+            )
             built = await self.builder.build(
                 event,
                 self.config,
@@ -100,6 +111,8 @@ class DialoguesSoulPlugin:
                 decision_format=cfg.get(self.config, "decision.format", "marker"),
                 forward_renderer=build_forward_renderer(event, self.config),
                 summary_service=self.summary_service,
+                wake_starts=starts_session,
+                wake_limits=limits,
             )
             if route.wake_session is not None:
                 event.set_extra(
@@ -110,9 +123,7 @@ class DialoguesSoulPlugin:
                         "starts_session": False,
                     },
                 )
-            elif decision and cfg.get(self.config, "wake.enabled", False):
-                session_id = uuid.uuid4().hex
-                limits = self.wake.resolve_limits(event, self.config)
+            elif starts_session:
                 self.wake.reserve(key, limits, session_id)
                 event.set_extra(
                     "ds_wake",

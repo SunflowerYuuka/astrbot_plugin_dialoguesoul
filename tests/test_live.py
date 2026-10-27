@@ -127,6 +127,15 @@ class LiveServiceTest(unittest.IsolatedAsyncioTestCase):
         config = {"trigger": {"strategy": "window", "interest": {"provider_id": ""}}}
         self.assertIsNone(build_interest_judge(Context(), config))
 
+    async def test_interest_judge_disabled_by_switch(self):
+        config = {
+            "trigger": {
+                "strategy": "interest",
+                "interest": {"enabled": False, "provider_id": "judge"},
+            }
+        }
+        self.assertIsNone(build_interest_judge(Context(by_id=Provider("YES")), config))
+
     async def test_interest_judge_provider_errors_degrade_to_false(self):
         context = Context(by_id=FailingProvider())
         config = {

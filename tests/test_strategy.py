@@ -112,6 +112,34 @@ class StrategyTest(unittest.IsolatedAsyncioTestCase):
         engine = StrategyEngine(Gate(), WakeManager())
         self.assertEqual((await engine.route(E("想聊"), config("interest"))).kind, "ignore")
 
+    async def test_interest_disabled_falls_back_to_window(self):
+        called = []
+
+        async def judge(event, history_text=""):
+            called.append(history_text)
+            return False
+
+        engine = StrategyEngine(Gate(), WakeManager(), interest_judge=judge)
+        data = config(
+            "interest",
+            trigger={
+                "strategy": "interest",
+                "window_seconds": 30,
+                "probability": 0.0,
+                "keywords": [],
+                "blacklist_keywords": [],
+                "ignored_prefixes": [],
+                "interest": {"enabled": False},
+            },
+        )
+        first = await engine.route(E("普通"), data, now=100)
+        second = await engine.route(E("普通"), data, now=110)
+        third = await engine.route(E("普通"), data, now=131)
+        self.assertEqual(first.kind, "decision")
+        self.assertEqual(second.kind, "ignore")
+        self.assertEqual(third.kind, "decision")
+        self.assertEqual(called, [])
+
     async def test_burst_only_configured_group(self):
         engine = StrategyEngine(Gate(), WakeManager())
         data = config(

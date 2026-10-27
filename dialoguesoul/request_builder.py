@@ -55,6 +55,8 @@ class RequestBuilder:
         caption_service=None,
         forward_renderer=None,
         summary_service=None,
+        wake_starts: bool = False,
+        wake_limits=None,
     ) -> BuiltRequest:
         key = ChatKey.from_event(event)
         limit = history_limit(config, decision)
@@ -120,6 +122,24 @@ class RequestBuilder:
         extra_prompt = ""
         if cfg.get(config, "extra_prompt.enabled", False):
             extra_prompt = cfg.get(config, "extra_prompt.text", "")
+        wake_hint = ""
+        wake_limits_for_hint = None
+        wake_consumed = 0
+        if wake_session is not None:
+            wake_limits_for_hint = wake_session.limits
+            wake_consumed = wake_session.consumed_replies
+        elif wake_starts:
+            wake_limits_for_hint = wake_limits
+        if wake_limits_for_hint is not None:
+            if (
+                wake_limits_for_hint.max_replies > 0
+                and wake_consumed + 1 >= wake_limits_for_hint.max_replies
+            ):
+                wake_hint = cfg.get(
+                    config,
+                    "wake.final_reply_prompt",
+                    cfg.DEFAULTS["wake"]["final_reply_prompt"],
+                )
         system_prompt = build_system_prompt(
             persona,
             build_environment(event),
@@ -127,6 +147,7 @@ class RequestBuilder:
             extra_prompt,
             decision,
             decision_format=decision_format,
+            wake_hint=wake_hint,
         )
         request = event.request_llm(
             prompt="\n".join(segments) or "[非文本消息]",

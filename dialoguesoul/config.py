@@ -12,7 +12,7 @@ DEFAULTS: dict[str, Any] = {
         "probability": 0.1,
         "strategy": "window",
         "window_seconds": 30,
-        "interest": {"provider_id": ""},
+        "interest": {"enabled": True, "provider_id": ""},
         "burst": {
             "enabled": False,
             "groups": [],
@@ -36,6 +36,7 @@ DEFAULTS: dict[str, Any] = {
         "duration_seconds": 300,
         "max_replies": 5,
         "idle_timeout_seconds": 120,
+        "final_reply_prompt": "这是本次唤醒会话的最后一条回复。请自然收尾，不要生硬地宣布结束，也不要提及次数限制。",
         # 私聊默认与全局一致；管理员默认三项均为 0（不限）
         "private": {
             "duration_seconds": 300,

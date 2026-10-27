@@ -63,7 +63,7 @@
 | `every_message` | 通过硬门控后，每条消息都进入决策。 |
 | `rules` | 关键词、问句或概率命中后进入决策。 |
 | `window` | 距上次判断超过 `trigger.window_seconds` 才进入决策，默认 30 秒；窗口内消息只入库、不判断。 |
-| `interest` | 先用轻量判断模型输出 `YES` / `NO`，只有 `YES` 才进入决策。 |
+| `interest` | 先用轻量判断模型输出 `YES` / `NO`，只有 `YES` 才进入决策。关闭 `trigger.interest.enabled` 时退化为 `window`。 |
 
 补充行为：
 
@@ -112,7 +112,8 @@
 
 - `wake.duration_seconds`：总时长，`0` 表示不限。
 - `wake.idle_timeout_seconds`：空闲超时，`0` 表示不限。
-- `wake.max_replies`：最多回复次数，默认 `5`，`0` 表示不限。模型忽略、决策失败不消耗次数。AstrBot 4.29.1 的发送阶段不提供可靠的失败标志，因此插件按“进入发送阶段且结果链非空”做 best-effort 计数，发送失败仍可能消耗次数。
+- `wake.max_replies`：最多回复次数，默认 `5`，`0` 表示不限。模型忽略、决策失败不消耗次数。aiocqhttp 下按 `_has_send_oper` 判断实际发送成功后才计数；其他适配器没有可靠失败标志时保持 best-effort。
+- `wake.final_reply_prompt`：可选收尾提示词。`max_replies > 0` 且本次是唤醒会话最后一条回复时，以 `[唤醒收尾提示]` 注入 system prompt，让模型自然收尾；留空则不注入。
 - 达到任意限制后会话结束；旧的延迟发送不会重新开启已结束的会话。
 - `wake.private`、`wake.admin`、`wake.groups` 可分别覆盖私聊、管理员和指定群的限制，管理员优先级最高。私聊默认值与全局一致；群覆盖中留空表示继承全局，通过 `template_list` 配置。
 
@@ -123,7 +124,7 @@
 - `context.history_limit`：普通请求读取的最近历史条数，默认 20。
 - `decision.max_context_messages`：决策请求读取的最近历史条数，默认 20。当前触发消息本身会作为 prompt 发送，因此会从历史中排除，避免重复。
 - `context.image_caption`：可选的图片转述。开启后，决策请求会先调用指定或当前 provider 生成图片描述，并把描述与原始图片一起交给模型；支持并发限制与进程内 LRU 缓存。
-- `context.forward.parse`：可选的合并转发解析。开启后读取当前消息中的合并转发，按 `max_depth`、`max_nodes`、`max_chars`、`timeout` 限制展开；失败时使用占位文本。
+- `context.forward.parse`：可选的合并转发解析。开启后通过 OneBot `get_forward_msg` 读取当前消息中的合并转发，兼容 `data.text` 结构与嵌套节点，按 `max_depth`、`max_nodes`、`max_chars`、`timeout` 限制展开；失败或空内容时使用占位文本并写入警告日志。
 - `context.summary`：可选的上下文摘要。历史条数达到 `threshold`（默认 20）时调用指定或当前 provider 生成摘要，失败时回退到原始历史。
 - `persona`：从 AstrBot 读取并注入人格；`persona.name` 指定人格名称，留空或找不到时使用默认人格。`extra_prompt` 仅对当前请求生效。
 - `storage.db_path`：SQLite 路径，留空时使用插件数据目录下的 `dialoguesoul.sqlite3`。

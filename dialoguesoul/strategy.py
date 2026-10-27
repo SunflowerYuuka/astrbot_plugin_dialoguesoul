@@ -92,6 +92,10 @@ class StrategyEngine:
             return RouteDecision("ignore")
 
         strategy = cfg.get(config, "trigger.strategy", "window")
+        if strategy == "interest" and not cfg.get(
+            config, "trigger.interest.enabled", True
+        ):
+            strategy = "window"
         if strategy == "rules":
             result = self.gate.check(event, config, now=now)
             if result.action != "candidate":

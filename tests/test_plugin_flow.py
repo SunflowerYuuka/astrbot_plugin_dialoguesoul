@@ -80,6 +80,7 @@ class FakeEvent(RequestLLMMixin):
         )
         self.text = text
         self._extra = {}
+        self._has_send_oper = True
         self.request = None
         self.call_llm = False
 
@@ -238,6 +239,22 @@ class PluginFlowTest(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.assertEqual(plugin.wake.get(key).session_id, wake_meta["session_id"])
+
+    async def test_wake_first_reply_uses_final_prompt_when_cap_is_one(self):
+        config = _base_config()
+        config["wake"] = {
+            "enabled": True,
+            "max_replies": 1,
+            "final_reply_prompt": "请自然收尾",
+        }
+        plugin = self._plugin(config=config)
+        event = FakeEvent()
+
+        requests = await _collect(plugin, event)
+
+        self.assertEqual(len(requests), 1)
+        self.assertIn("[唤醒收尾提示]", requests[0].system_prompt)
+        self.assertIn("请自然收尾", requests[0].system_prompt)
 
     async def test_handle_message_clears_expired_wake_sessions(self):
         config = _base_config()

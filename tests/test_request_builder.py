@@ -419,6 +419,84 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_wake_final_prompt_is_injected_when_session_starts_and_cap_is_one(self):
+        limits = WakeLimits(duration_seconds=300, max_replies=1, idle_timeout_seconds=120)
+        config = _base_config()
+        config["wake"] = {"final_reply_prompt": "请自然收尾"}
+
+        built = await self._build(
+            _builder(),
+            FakeEvent(),
+            config,
+            wake_session=None,
+            wake_starts=True,
+            wake_limits=limits,
+        )
+
+        self.assertIn("[唤醒收尾提示]", built.request.system_prompt)
+
+    async def test_wake_final_prompt_is_injected_on_last_reply(self):
+        limits = WakeLimits(duration_seconds=300, max_replies=5, idle_timeout_seconds=120)
+        session = WakeSession(
+            limits=limits,
+            started_at=0.0,
+            last_activity_at=0.0,
+            session_id="s1",
+            consumed_replies=4,
+        )
+        config = _base_config()
+        config["wake"] = {"final_reply_prompt": "请自然收尾"}
+
+        built = await self._build(
+            _builder(), FakeEvent(), config, wake_session=session
+        )
+
+        self.assertIn("[唤醒收尾提示]", built.request.system_prompt)
+        self.assertIn("请自然收尾", built.request.system_prompt)
+
+    async def test_wake_final_prompt_not_injected_before_last_reply(self):
+        limits = WakeLimits(duration_seconds=300, max_replies=5, idle_timeout_seconds=120)
+        session = WakeSession(
+            limits=limits,
+            started_at=0.0,
+            last_activity_at=0.0,
+            session_id="s1",
+            consumed_replies=3,
+        )
+        config = _base_config()
+        config["wake"] = {"final_reply_prompt": "请自然收尾"}
+
+        built = await self._build(
+            _builder(), FakeEvent(), config, wake_session=session
+        )
+
+        self.assertNotIn("[唤醒收尾提示]", built.request.system_prompt)
+
+    async def test_wake_final_prompt_skipped_when_unlimited_or_empty(self):
+        config = _base_config()
+        config["wake"] = {"final_reply_prompt": "请自然收尾"}
+        unlimited = WakeSession(
+            limits=WakeLimits(300, 0, 120),
+            started_at=0.0,
+            last_activity_at=0.0,
+            session_id="s1",
+            consumed_replies=99,
+        )
+        built = await self._build(
+            _builder(), FakeEvent(), config, wake_session=unlimited
+        )
+        self.assertNotIn("[唤醒收尾提示]", built.request.system_prompt)
+
+        config["wake"] = {"final_reply_prompt": ""}
+        last = WakeSession(
+            limits=WakeLimits(300, 1, 120),
+            started_at=0.0,
+            last_activity_at=0.0,
+            session_id="s1",
+        )
+        built = await self._build(_builder(), FakeEvent(), config, wake_session=last)
+        self.assertNotIn("[唤醒收尾提示]", built.request.system_prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

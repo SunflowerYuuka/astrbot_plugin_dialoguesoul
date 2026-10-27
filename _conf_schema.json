@@ -58,6 +58,12 @@
         "description": "兴趣判断",
         "type": "object",
         "items": {
+          "enabled": {
+            "description": "启用兴趣判断",
+            "hint": "关闭时 interest 策略退化为时间窗口",
+            "type": "bool",
+            "default": true
+          },
           "provider_id": {
             "description": "兴趣判断 Provider ID，留空用当前",
             "type": "string",
@@ -173,7 +179,7 @@
       },
       "max_replies": {
         "description": "最多回复条数",
-        "hint": "唤醒会话期间最多回复次数（best-effort），0 表示不限",
+        "hint": "唤醒会话期间最多成功发送的回复次数，0 表示不限",
         "type": "int",
         "default": 5
       },
@@ -182,6 +188,12 @@
         "hint": "0 表示不限",
         "type": "int",
         "default": 120
+      },
+      "final_reply_prompt": {
+        "description": "唤醒收尾提示词",
+        "hint": "仅在 max_replies > 0 且即将发出本次唤醒的最后一条回复时注入；留空则不注入",
+        "type": "string",
+        "default": "这是本次唤醒会话的最后一条回复。请自然收尾，不要生硬地宣布结束，也不要提及次数限制。"
       },
       "private": {
         "description": "私聊覆盖",

@@ -4,7 +4,7 @@ import inspect
 
 from .. import config as cfg
 from ..interest import InterestJudge
-from .forwards import ForwardRenderer
+from .forwards import ForwardRenderer, fetch_forward_payload
 from .images import CaptionService
 from .summary import SummaryService
 
@@ -50,13 +50,7 @@ def build_forward_renderer(event, config):
         return None
 
     async def fetcher(forward_id: str):
-        bot = getattr(event, "bot", None)
-        if bot and hasattr(bot, "api") and hasattr(bot.api, "get_forward_msg"):
-            return await bot.api.get_forward_msg(forward_id)
-        call_api = getattr(event, "call_api", None)
-        if callable(call_api):
-            return await call_api("get_forward_msg", {"id": forward_id})
-        return {}
+        return await fetch_forward_payload(event, forward_id)
 
     return ForwardRenderer(
         fetcher,
@@ -91,6 +85,8 @@ def build_summary_service(context, config):
 
 def build_interest_judge(context, config):
     if cfg.get(config, "trigger.strategy", "window") != "interest":
+        return None
+    if not cfg.get(config, "trigger.interest.enabled", True):
         return None
 
     async def resolver(event):

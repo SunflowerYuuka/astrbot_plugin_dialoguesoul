@@ -77,15 +77,25 @@ class Hooks:
             chain.insert(0, Reply(id=ref["id"], sender_id=ref["sender_id"]))
         result.chain = chain
 
+    @staticmethod
+    def _send_confirmed(event) -> bool:
+        """aiocqhttp 用 ``_has_send_oper`` 判断发送是否真正完成。
+
+        其他适配器（如 qqofficial）不调用基类 ``send``，该标志始终为
+        False；没有可靠失败信号时保持原有 best-effort 行为。
+        """
+        platform = str(getattr(event, "get_platform_name", lambda: "")() or "")
+        if platform.lower() != "aiocqhttp":
+            return True
+        return bool(getattr(event, "_has_send_oper", False))
+
     async def after_message_sent(self, event):
         """Record a sent reply and advance per-chat/wake state.
 
         AstrBot 4.29.1's ``RespondStage`` catches adapter send exceptions and
-        still emits ``after_message_sent``; ``_has_send_oper`` is also set
-        before the adapter call completes. There is no reliable failure flag,
-        so delivery accounting here is best-effort: we only require a
-        non-empty decorated result chain (the stage skips this hook for empty
-        chains). A failed adapter send may therefore consume a wake reply.
+        still emits ``after_message_sent``. On aiocqhttp, ``_has_send_oper`` is
+        set only after the adapter send completes, so failed sends are skipped.
+        Other adapters may not set the flag; they keep best-effort accounting.
         """
         if not self.repo:
             return
@@ -95,6 +105,8 @@ class Hooks:
         result = getattr(event, "_result", None)
         chain = getattr(result, "chain", None) if result is not None else None
         if not chain:
+            return
+        if not self._send_confirmed(event):
             return
 
         key = ChatKey.from_event(event)

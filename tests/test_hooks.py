@@ -12,11 +12,21 @@ from dialoguesoul.wake import WakeLimits, WakeManager
 
 
 class _Event:
-    def __init__(self, extras=None, result=None, private=False, group_id="1"):
+    def __init__(
+        self,
+        extras=None,
+        result=None,
+        private=False,
+        group_id="1",
+        send_oper=True,
+        platform="p",
+    ):
         self._extra = dict(extras or {})
         self._result = result
         self._private = private
         self._group_id = group_id
+        self._has_send_oper = send_oper
+        self._platform = platform
 
     def set_extra(self, key, value):
         self._extra[key] = value
@@ -40,7 +50,7 @@ class _Event:
         return self._group_id
 
     def get_platform_name(self):
-        return "p"
+        return self._platform
 
     def get_self_id(self):
         return "bot"
@@ -271,6 +281,23 @@ class HooksTest(unittest.IsolatedAsyncioTestCase):
                 "ds_wake": {"session_id": "s1", "limits": limits, "starts_session": True},
             },
             result=types.SimpleNamespace(chain=[]),
+        )
+        await Hooks(repo=repo, wake=wake, config={}).after_message_sent(event)
+        self.assertEqual(repo.messages, [])
+        self.assertEqual(wake.deliveries, [])
+
+    async def test_failed_send_does_not_record_delivery(self):
+        repo = _Repo()
+        wake = _WakeRecorder()
+        limits = WakeLimits(300, 2, 120)
+        event = _Event(
+            {
+                "ds_request_kind": "decision",
+                "ds_wake": {"session_id": "s1", "limits": limits, "starts_session": True},
+            },
+            result=types.SimpleNamespace(chain=[{"type": "plain", "text": "hi"}]),
+            send_oper=False,
+            platform="aiocqhttp",
         )
         await Hooks(repo=repo, wake=wake, config={}).after_message_sent(event)
         self.assertEqual(repo.messages, [])

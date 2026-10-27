@@ -33,12 +33,15 @@ def build_system_prompt(
     extra: str,
     decision: bool,
     decision_format: str = "json",
+    wake_hint: str = "",
 ) -> str:
     parts = [persona.strip(), environment.strip()]
     if history.strip():
         parts.append("以下是最近的聊天记录：\n" + history.strip())
     if extra.strip():
         parts.append("[附加提示词]\n" + extra.strip())
+    if wake_hint.strip():
+        parts.append("[唤醒收尾提示]\n" + wake_hint.strip())
     if decision:
         instruction = (
             build_marker_instruction()
