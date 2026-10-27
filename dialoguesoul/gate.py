@@ -9,6 +9,7 @@ from dialoguesoul import config as cfg
 from dialoguesoul.models import ChatKey
 
 _QUESTION = re.compile(r"[?？]|^(吗|呢|怎么|为什么|如何|什么|谁|哪|几|多少|是不是|能不能|可不可以)")
+_RATE_WINDOW = 60.0
 
 
 @dataclass(frozen=True)
@@ -54,7 +55,7 @@ class Gate:
         cooldown = cfg.get(config, "decision.cooldown_ms", 3000) / 1000
         if now - self._last_reply.get(key, 0) < cooldown:
             return "cooldown"
-        times = [t for t in self._reply_times.get(key, []) if now - t < 60]
+        times = [t for t in self._reply_times.get(key, []) if now - t < _RATE_WINDOW]
         self._reply_times[key] = times
         if len(times) >= cfg.get(config, "decision.max_replies_per_minute", 6):
             return "rate_limited"
@@ -80,12 +81,13 @@ class Gate:
             return GateResult("skip", "self")
 
         message_id = str(getattr(getattr(event, "message_obj", None), "message_id", "") or "")
-        seen_key = f"{event.get_platform_name()}:{event.get_group_id() or event.get_sender_id()}:{message_id}"
+        seen_key = (
+            f"{event.get_platform_name()}:{event.get_self_id()}"
+            f":{event.get_group_id() or event.get_sender_id()}:{message_id}"
+        )
         self._seen = {k: t for k, t in self._seen.items() if now - t < self._seen_ttl}
         if message_id and seen_key in self._seen:
             return GateResult("skip", "duplicate")
-        if message_id:
-            self._seen[seen_key] = now
 
         blacklist = cfg.get(config, "trigger.blacklist_keywords", []) or []
         if any(word in text for word in blacklist):
@@ -95,10 +97,13 @@ class Gate:
         limited = self._limited(key, config, bypass=direct, now=now)
         if limited:
             return GateResult("skip", limited)
+        # 仅在真正通过硬门控后才记入去重表，避免被冷却/限流拦下的消息被误判为重复
+        if message_id:
+            self._seen[seen_key] = now
         return None
 
-    def check(self, event, config, inflight: bool = False, now: float | None = None) -> GateResult:
-        """硬门控 + 触发判定。``inflight`` 预留给调用方的并发锁。"""
+    def check(self, event, config, now: float | None = None) -> GateResult:
+        """硬门控 + 触发判定；并发拦截由调用方的 per-chat 锁负责。"""
         hard = self.hard_check(event, config, now)
         if hard is not None:
             return hard
@@ -119,5 +124,8 @@ class Gate:
         now = time.time() if now is None else now
         key = ChatKey.from_event(event).as_tuple()
         self._last_reply[key] = now
-        self._reply_times.setdefault(key, []).append(now)
+        # 顺带裁剪过期记录：直接呼唤会绕过 _limited，若只在那里裁剪，列表会无界增长
+        times = [t for t in self._reply_times.get(key, []) if now - t < _RATE_WINDOW]
+        times.append(now)
+        self._reply_times[key] = times
         return now

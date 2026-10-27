@@ -6,6 +6,7 @@ from tests._helpers import install_astrbot_stub
 install_astrbot_stub()
 
 from dialoguesoul.gate import Gate
+from dialoguesoul.models import ChatKey
 
 
 class E:
@@ -103,6 +104,24 @@ class HardCheckTest(unittest.TestCase):
         data["_temp_mute"] = {"until": 2000.0}
         self.assertEqual(self.gate.hard_check(E("触发"), data, now=1000.0).reason, "muted")
 
+    def test_hard_check_skips_empty_without_direct(self):
+        result = self.gate.hard_check(E(""), config())
+        self.assertEqual((result.action, result.reason), ("skip", "empty"))
+
+    def test_hard_check_passes_empty_text_with_direct_address(self):
+        self.assertIsNone(self.gate.hard_check(mention(text=""), config()))
+
+    def test_hard_check_skips_duplicate_message(self):
+        self.assertIsNone(self.gate.hard_check(E("触发", message_id="d1"), config(), now=1000.0))
+        result = self.gate.hard_check(E("触发", message_id="d1"), config(), now=1001.0)
+        self.assertEqual((result.action, result.reason), ("skip", "duplicate"))
+
+    def test_hard_check_seen_key_includes_self_id(self):
+        self.assertIsNone(self.gate.hard_check(E("触发", message_id="d1"), config(), now=1000.0))
+        other = E("触发", message_id="d1")
+        other.get_self_id = lambda: "bot2"
+        self.assertIsNone(self.gate.hard_check(other, config(), now=1001.0))
+
 
 class GateTest(unittest.TestCase):
     def setUp(self):
@@ -148,6 +167,40 @@ class GateTest(unittest.TestCase):
 
     def test_record_reply_returns_timestamp(self):
         self.assertEqual(self.gate.record_reply(E("触发"), now=1234.5), 1234.5)
+
+    def test_empty_text_skips(self):
+        result = self.gate.check(E(""), config())
+        self.assertEqual((result.action, result.reason), ("skip", "empty"))
+
+    def test_direct_address_with_empty_text_is_candidate(self):
+        result = self.gate.check(mention(text=""), config())
+        self.assertEqual((result.action, result.trigger, result.priority), ("candidate", "mention", 2))
+
+    def test_duplicate_message_skips(self):
+        self.assertEqual(self.gate.check(E("触发", message_id="d1"), config()).action, "candidate")
+        result = self.gate.check(E("触发", message_id="d1"), config())
+        self.assertEqual((result.action, result.reason), ("skip", "duplicate"))
+
+    def test_cooldown_skip_does_not_poison_message(self):
+        self.gate.record_reply(E("触发"), now=1000.0)
+        blocked = self.gate.check(E("触发", message_id="c1"), config(), now=1001.0)
+        self.assertEqual(blocked.reason, "cooldown")
+        retried = self.gate.check(E("触发", message_id="c1"), config(), now=1100.0)
+        self.assertEqual((retried.action, retried.trigger), ("candidate", "keyword"))
+
+    def test_reset_clears_cooldown_and_seen(self):
+        self.assertEqual(self.gate.check(E("触发", message_id="r1"), config(), now=1000.0).action, "candidate")
+        self.assertEqual(self.gate.check(E("触发", message_id="r1"), config(), now=1000.0).reason, "duplicate")
+        self.gate.record_reply(E("触发"), now=1000.0)
+        self.assertEqual(self.gate.check(E("触发", message_id="r2"), config(), now=1001.0).reason, "cooldown")
+        self.gate.reset()
+        self.assertEqual(self.gate.check(E("触发", message_id="r1"), config(), now=1001.0).action, "candidate")
+
+    def test_record_reply_prunes_stale_times(self):
+        self.gate.record_reply(E("触发"), now=1000.0)
+        self.gate.record_reply(E("触发"), now=1200.0)
+        key = ChatKey.from_event(E("触发")).as_tuple()
+        self.assertEqual(self.gate._reply_times[key], [1200.0])
 
 
 if __name__ == "__main__":
