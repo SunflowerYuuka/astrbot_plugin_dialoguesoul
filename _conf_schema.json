@@ -1,0 +1,411 @@
+{
+  "enabled": {
+    "description": "启用 DialoguesSoul",
+    "hint": "总开关，关闭后插件不参与任何聊天",
+    "type": "bool",
+    "default": false
+  },
+  "enable_all_groups": {
+    "description": "回复所有群聊",
+    "hint": "开启后除黑名单外的所有群都会被回复",
+    "type": "bool",
+    "default": false
+  },
+  "enabled_groups": {
+    "description": "启用的群聊",
+    "hint": "仅在未开启「回复所有群聊」时生效",
+    "type": "list",
+    "items": { "type": "string" },
+    "default": []
+  },
+  "blocked_groups": {
+    "description": "黑名单群聊",
+    "hint": "这些群永不回复，优先级高于启用列表",
+    "type": "list",
+    "items": { "type": "string" },
+    "default": []
+  },
+  "enabled_private": {
+    "description": "启用私聊",
+    "type": "bool",
+    "default": false
+  },
+  "trigger": {
+    "description": "触发规则",
+    "type": "object",
+    "items": {
+      "probability": {
+        "description": "概率回复",
+        "hint": "仅在「关键词规则」策略下作为兜底概率",
+        "type": "float",
+        "default": 0.1
+      },
+      "strategy": {
+        "description": "触发策略",
+        "hint": "every_message 每条都判断；rules 关键词/问句/概率；window 按时间窗口取首条；interest 由兴趣判断模型决定",
+        "type": "string",
+        "options": ["every_message", "rules", "window", "interest"],
+        "labels": ["每条消息", "规则匹配", "时间窗口", "兴趣判断"],
+        "default": "window"
+      },
+      "window_seconds": {
+        "description": "时间窗口（秒）",
+        "hint": "仅「时间窗口」策略生效，窗口内的后续消息不再判断",
+        "type": "int",
+        "default": 30
+      },
+      "interest": {
+        "description": "兴趣判断",
+        "type": "object",
+        "items": {
+          "provider_id": {
+            "description": "兴趣判断 Provider ID，留空用当前",
+            "type": "string",
+            "default": ""
+          }
+        }
+      },
+      "burst": {
+        "description": "刷屏保护",
+        "type": "object",
+        "items": {
+          "enabled": {
+            "description": "启用刷屏保护",
+            "type": "bool",
+            "default": false
+          },
+          "groups": {
+            "description": "启用刷屏保护的群聊",
+            "hint": "留空表示所有群；仅在启用后生效",
+            "type": "list",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "threshold": {
+            "description": "刷屏判定条数",
+            "hint": "30 秒内消息数达到该值视为刷屏",
+            "type": "int",
+            "default": 50
+          },
+          "cooldown_seconds": {
+            "description": "刷屏静默时长（秒）",
+            "type": "int",
+            "default": 30
+          }
+        }
+      },
+      "keywords": {
+        "description": "触发关键词",
+        "type": "list",
+        "items": { "type": "string" },
+        "default": []
+      },
+      "blacklist_keywords": {
+        "description": "黑名单关键词",
+        "hint": "消息包含任一词则跳过",
+        "type": "list",
+        "items": { "type": "string" },
+        "default": []
+      },
+      "ignored_prefixes": {
+        "description": "忽略的指令前缀",
+        "type": "list",
+        "items": { "type": "string" },
+        "default": []
+      }
+    }
+  },
+  "decision": {
+    "description": "决策",
+    "type": "object",
+    "items": {
+      "format": {
+        "description": "决策输出格式",
+        "hint": "marker 用 <NO_RESPONSE> 标记，json 要求模型返回 JSON",
+        "type": "string",
+        "options": ["marker", "json"],
+        "labels": ["标记文本", "JSON"],
+        "default": "marker"
+      },
+      "max_reply_messages": {
+        "description": "最多回复条数",
+        "type": "int",
+        "default": 3
+      },
+      "min_confidence": {
+        "description": "最低置信度",
+        "type": "float",
+        "default": 0.55
+      },
+      "timeout_ms": {
+        "description": "单次超时（毫秒）",
+        "type": "int",
+        "default": 2000
+      },
+      "max_context_messages": {
+        "description": "上下文消息数",
+        "type": "int",
+        "default": 20
+      },
+      "cooldown_ms": {
+        "description": "回复冷却（毫秒）",
+        "type": "int",
+        "default": 3000
+      },
+      "max_replies_per_minute": {
+        "description": "每分钟上限",
+        "type": "int",
+        "default": 6
+      }
+    }
+  },
+  "wake": {
+    "description": "唤醒会话",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用唤醒会话",
+        "type": "bool",
+        "default": false
+      },
+      "duration_seconds": {
+        "description": "总时长（秒）",
+        "type": "int",
+        "default": 300
+      },
+      "max_replies": {
+        "description": "最多回复条数",
+        "hint": "唤醒会话期间最多主动回复的次数",
+        "type": "int",
+        "default": 5
+      },
+      "idle_timeout_seconds": {
+        "description": "空闲超时（秒）",
+        "type": "int",
+        "default": 120
+      },
+      "private": {
+        "description": "私聊覆盖",
+        "type": "object",
+        "items": {
+          "duration_seconds": {
+            "description": "总时长",
+            "type": "int",
+            "default": 300
+          },
+          "max_replies": {
+            "description": "最多回复条数",
+            "type": "int",
+            "default": 5
+          },
+          "idle_timeout_seconds": {
+            "description": "空闲超时",
+            "type": "int",
+            "default": 120
+          }
+        }
+      },
+      "admin": {
+        "description": "管理员覆盖",
+        "hint": "0 表示沿用默认值",
+        "type": "object",
+        "items": {
+          "duration_seconds": {
+            "description": "总时长",
+            "type": "int",
+            "default": 0
+          },
+          "max_replies": {
+            "description": "最多回复条数",
+            "type": "int",
+            "default": 0
+          },
+          "idle_timeout_seconds": {
+            "description": "空闲超时",
+            "type": "int",
+            "default": 0
+          }
+        }
+      },
+      "groups": {
+        "description": "群聊覆盖",
+        "type": "template_list",
+        "default": [],
+        "templates": {
+          "group": {
+            "name": "群聊覆盖",
+            "items": {
+              "group_id": {
+                "description": "群号",
+                "type": "string",
+                "default": ""
+              },
+              "duration_seconds": {
+                "description": "总时长，留空继承",
+                "type": "string",
+                "default": ""
+              },
+              "max_replies": {
+                "description": "最多回复条数，留空继承",
+                "type": "string",
+                "default": ""
+              },
+              "idle_timeout_seconds": {
+                "description": "空闲超时，留空继承",
+                "type": "string",
+                "default": ""
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "context": {
+    "description": "上下文",
+    "type": "object",
+    "items": {
+      "history_limit": {
+        "description": "历史条数",
+        "type": "int",
+        "default": 20
+      },
+      "summary": {
+        "description": "上下文摘要",
+        "type": "object",
+        "items": {
+          "enabled": {
+            "description": "启用上下文摘要",
+            "type": "bool",
+            "default": false
+          },
+          "provider_id": {
+            "description": "摘要 Provider ID，留空用当前",
+            "type": "string",
+            "default": ""
+          },
+          "threshold": {
+            "description": "触发摘要的历史条数",
+            "type": "int",
+            "default": 50
+          }
+        }
+      },
+      "image_caption": {
+        "description": "图片转述",
+        "type": "object",
+        "items": {
+          "enabled": {
+            "description": "启用图片转述",
+            "type": "bool",
+            "default": false
+          },
+          "provider_id": {
+            "description": "转述 Provider ID，留空用当前",
+            "type": "string",
+            "default": ""
+          },
+          "prompt": {
+            "description": "转述提示词",
+            "type": "string",
+            "default": "请直接简短描述这张图片"
+          },
+          "concurrency": {
+            "description": "并发数",
+            "type": "int",
+            "default": 3
+          },
+          "cache_size": {
+            "description": "进程内缓存条数",
+            "type": "int",
+            "default": 128
+          }
+        }
+      },
+      "forward": {
+        "description": "合并转发",
+        "type": "object",
+        "items": {
+          "parse": {
+            "description": "解析合并转发",
+            "type": "bool",
+            "default": false
+          },
+          "max_depth": {
+            "description": "最大层数",
+            "type": "int",
+            "default": 2
+          },
+          "max_nodes": {
+            "description": "最大条数",
+            "type": "int",
+            "default": 50
+          },
+          "max_chars": {
+            "description": "最大字符数",
+            "type": "int",
+            "default": 2000
+          },
+          "timeout": {
+            "description": "超时秒数",
+            "type": "int",
+            "default": 5
+          }
+        }
+      }
+    }
+  },
+  "persona": {
+    "description": "人格",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "注入人格",
+        "type": "bool",
+        "default": true
+      },
+      "name": {
+        "description": "人格名称，留空用默认",
+        "type": "string",
+        "default": ""
+      }
+    }
+  },
+  "extra_prompt": {
+    "description": "附加提示词",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用附加提示词",
+        "type": "bool",
+        "default": false
+      },
+      "text": {
+        "description": "附加提示词内容",
+        "type": "text",
+        "default": ""
+      }
+    }
+  },
+  "storage": {
+    "description": "存储",
+    "type": "object",
+    "items": {
+      "db_path": {
+        "description": "SQLite 路径，留空用插件数据目录",
+        "type": "string",
+        "default": ""
+      },
+      "retention_days": {
+        "description": "保留天数，0 不限",
+        "type": "int",
+        "default": 30
+      },
+      "retention_count": {
+        "description": "每个聊天保留条数，0 不限",
+        "type": "int",
+        "default": 500
+      }
+    }
+  }
+}
