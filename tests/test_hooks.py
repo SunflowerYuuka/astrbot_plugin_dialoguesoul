@@ -62,6 +62,11 @@ class _Repo:
         self.prune_calls.append((key, keep_last))
 
 
+class _FailingPruneRepo(_Repo):
+    async def prune_before(self, cutoff):
+        raise RuntimeError("prune failed")
+
+
 class _WakeRecorder:
     def __init__(self):
         self.deliveries = []
@@ -153,6 +158,40 @@ class HooksTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.chain[0].id, "m1")
         self.assertEqual(result.chain[1].text, "hi")
 
+    async def test_json_invalid_quote_does_not_insert_reply(self):
+        hooks = Hooks(repo=None, wake=None, config={})
+        result = types.SimpleNamespace(chain=[])
+        event = _Event(
+            {
+                "ds_request_kind": "decision",
+                "ds_decision_format": "json",
+                "ds_decision": parse_decision(
+                    '{"action":"reply","messages":["hi"],"confidence":0.9,"quote":"bad"}', 3, 0.5
+                ),
+                "ds_history_map": {1: {"id": "m1", "sender_id": "u"}},
+            },
+            result=result,
+        )
+        await hooks.on_decorating_result(event)
+        self.assertEqual([component.text for component in result.chain], ["hi"])
+
+    async def test_json_out_of_range_quote_does_not_insert_reply(self):
+        hooks = Hooks(repo=None, wake=None, config={})
+        result = types.SimpleNamespace(chain=[])
+        event = _Event(
+            {
+                "ds_request_kind": "decision",
+                "ds_decision_format": "json",
+                "ds_decision": parse_decision(
+                    '{"action":"reply","messages":["hi"],"confidence":0.9,"quote":99}', 3, 0.5
+                ),
+                "ds_history_map": {1: {"id": "m1", "sender_id": "u"}},
+            },
+            result=result,
+        )
+        await hooks.on_decorating_result(event)
+        self.assertEqual([component.text for component in result.chain], ["hi"])
+
     async def test_json_reply_without_quote_rebuilds_chain(self):
         hooks = Hooks(repo=None, wake=None, config={})
         result = types.SimpleNamespace(chain=[{"type": "plain", "text": "raw"}])
@@ -213,6 +252,66 @@ class HooksTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(repo.messages), 1)
         self.assertEqual(repo.messages[0].components, [{"type": "plain", "text": "hi"}])
         self.assertEqual(wake.get(key).consumed_replies, 1)
+
+    async def _run_wake_delivery(self, wake_meta):
+        repo = _Repo()
+        wake = _WakeRecorder()
+        event = _Event(
+            {"ds_request_kind": "decision", "ds_wake": wake_meta},
+            result=types.SimpleNamespace(chain=[{"type": "plain", "text": "hi"}]),
+        )
+        with mock.patch(
+            "dialoguesoul.hooks.uuid.uuid4",
+            return_value=types.SimpleNamespace(hex="generated"),
+        ):
+            await Hooks(repo=repo, wake=wake, config={}).after_message_sent(event)
+        return wake
+
+    async def test_wake_empty_session_id_generates_fallback(self):
+        limits = WakeLimits(300, 2, 120)
+        wake = await self._run_wake_delivery(
+            {"session_id": "", "limits": limits, "starts_session": True}
+        )
+        args, kwargs = wake.deliveries[0]
+        self.assertEqual(args[2], "generated")
+        self.assertIs(args[1], limits)
+        self.assertTrue(kwargs["starts_session"])
+
+    async def test_wake_missing_session_id_generates_fallback(self):
+        limits = WakeLimits(300, 2, 120)
+        wake = await self._run_wake_delivery(
+            {"limits": limits, "starts_session": True}
+        )
+        args, kwargs = wake.deliveries[0]
+        self.assertEqual(args[2], "generated")
+        self.assertIs(args[1], limits)
+        self.assertTrue(kwargs["starts_session"])
+
+    async def test_wake_limits_propagate_unchanged(self):
+        limits = WakeLimits(300, 2, 120)
+        wake = await self._run_wake_delivery(
+            {"session_id": "s1", "limits": limits, "starts_session": False}
+        )
+        args, kwargs = wake.deliveries[0]
+        self.assertEqual(args, (("p", "bot", "group", "1"), limits, "s1"))
+        self.assertFalse(kwargs["starts_session"])
+
+    async def test_prune_failure_still_records_wake_delivery(self):
+        repo = _FailingPruneRepo()
+        wake = _WakeRecorder()
+        limits = WakeLimits(300, 2, 120)
+        event = _Event(
+            {
+                "ds_request_kind": "decision",
+                "ds_wake": {"session_id": "s1", "limits": limits, "starts_session": True},
+            },
+            result=types.SimpleNamespace(chain=[{"type": "plain", "text": "hi"}]),
+        )
+        with mock.patch("astrbot.api.all.logger.warning") as warning:
+            await Hooks(repo=repo, wake=wake, config={}).after_message_sent(event)
+        self.assertEqual(len(wake.deliveries), 1)
+        self.assertIs(wake.deliveries[0][0][1], limits)
+        warning.assert_called_once()
 
     async def test_ignore_does_not_record_delivery(self):
         repo = _Repo()

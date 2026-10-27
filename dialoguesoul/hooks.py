@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 
 from dialoguesoul import config as cfg
 from dialoguesoul.context.components import component_to_dict
@@ -93,18 +94,27 @@ class Hooks:
         )
         await self.repo.append(message)
 
-        days = int(cfg.get(self.config, "storage.retention_days", 30) or 0)
-        if days:
-            await self.repo.prune_before(now - days * 86400)
-        keep = int(cfg.get(self.config, "storage.retention_count", 500) or 0)
-        if keep:
-            await self.repo.prune(*key.as_tuple(), keep_last=keep)
+        try:
+            days = int(cfg.get(self.config, "storage.retention_days", 30) or 0)
+            if days:
+                await self.repo.prune_before(now - days * 86400)
+            keep = int(cfg.get(self.config, "storage.retention_count", 500) or 0)
+            if keep:
+                await self.repo.prune(*key.as_tuple(), keep_last=keep)
+        except Exception as exc:
+            from astrbot.api.all import logger
+
+            logger.warning(f"历史记录清理失败: {exc}")
 
         wake_meta = event.get_extra("ds_wake")
         if wake_meta and self.wake:
+            starts_session = bool(wake_meta.get("starts_session", False))
+            session_id = wake_meta.get("session_id") or ""
+            if not session_id and starts_session:
+                session_id = uuid.uuid4().hex
             self.wake.record_delivery(
                 key.as_tuple(),
                 wake_meta["limits"],
-                wake_meta["session_id"],
-                starts_session=wake_meta.get("starts_session", False),
+                session_id,
+                starts_session=starts_session,
             )
