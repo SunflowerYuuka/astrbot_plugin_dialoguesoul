@@ -269,7 +269,7 @@ CREATE TABLE meta (
 - 源路径：`<cwd>/data/chat_history/<platform>/<group|private>/<chat_id>.json`
 - 仅在数据库为空且 `meta.legacy_imported` 不存在时执行
 - 使用 `jsonpickle` 解码；失败时记录并跳过该文件
-- 成功后写入 `legacy_imported=1`
+- 成功后写入 `legacy_imported=1`；有条目/文件失败时写 `partial`；已有数据库跳过时写 `skipped_existing`
 
 ## 12. 配置
 
