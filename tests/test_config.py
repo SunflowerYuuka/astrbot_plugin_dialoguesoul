@@ -27,8 +27,27 @@ class ConfigTest(unittest.TestCase):
             def is_private_chat(self): return False
             def get_group_id(self): return "1"
 
-        data = {"enable_all_groups": True, "blocked_groups": ["1"]}
+        data = {"enabled": True, "enable_all_groups": True, "blocked_groups": ["1"]}
         self.assertFalse(cfg.chat_enabled(E(), data))
+
+    def test_master_switch_disables_group_and_private(self):
+        class E:
+            def __init__(self, private=False):
+                self.private = private
+
+            def is_private_chat(self):
+                return self.private
+
+            def get_group_id(self):
+                return "1"
+
+        group = {"enabled": False, "enable_all_groups": True, "enabled_private": True}
+        private = {"enabled": False, "enable_all_groups": True, "enabled_private": True}
+        self.assertFalse(cfg.chat_enabled(E(), group))
+        self.assertFalse(cfg.chat_enabled(E(private=True), private))
+        self.assertTrue(
+            cfg.chat_enabled(E(), {"enabled": True, "enable_all_groups": True})
+        )
 
     def test_revision2_defaults(self):
         self.assertEqual(cfg.get(cfg.DEFAULTS, "trigger.strategy"), "window")
@@ -102,6 +121,15 @@ class ConfigTest(unittest.TestCase):
             schema["context"]["items"]["summary"]["items"]["provider_id"]["_special"],
             "select_provider",
         )
+        self.assertEqual(
+            schema["context"]["items"]["image_caption"]["items"]["provider_id"]["_special"],
+            "select_provider",
+        )
+
+    def test_decision_timeout_is_not_exposed(self):
+        schema = json.loads((ROOT / "_conf_schema.json").read_text("utf-8"))
+        self.assertNotIn("timeout_ms", schema["decision"]["items"])
+        self.assertNotIn("timeout_ms", cfg.DEFAULTS["decision"])
 
     def test_schema_enumerates_strategy_and_format(self):
         schema = json.loads((ROOT / "_conf_schema.json").read_text("utf-8"))

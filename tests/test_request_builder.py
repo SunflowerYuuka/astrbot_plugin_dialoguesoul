@@ -1,7 +1,13 @@
 import types
 import unittest
 
-from tests._helpers import install_astrbot_stub
+from tests._helpers import (
+    RequestLLMMixin,
+    _Forward,
+    _Image,
+    _Plain,
+    install_astrbot_stub,
+)
 
 install_astrbot_stub()
 
@@ -25,14 +31,14 @@ def _message(index, message_id=None, sender_id="u"):
     )
 
 
-class FakeEvent:
+class FakeEvent(RequestLLMMixin):
     def __init__(self, components=None):
         self.unified_msg_origin = "p:group:1"
         self.message_obj = types.SimpleNamespace(
             message=list(components)
             if components is not None
-            else [types.SimpleNamespace(type="plain", text="hello")],
-            message_id="m1",
+            else [_Plain(text="hello")],
+            message_id="current",
         )
         self._extra = {}
         self.request = None
@@ -64,11 +70,6 @@ class FakeEvent:
 
     def get_extra(self, key, default=None):
         return self._extra.get(key, default)
-
-    def request_llm(self, **kwargs):
-        self.request = types.SimpleNamespace(**kwargs)
-        self.request.conversation = None
-        return self.request
 
 
 class FakeRepo:
@@ -119,6 +120,7 @@ def _base_config():
             "forward": {"parse": False},
             "summary": {"enabled": False},
         },
+        "decision": {"max_context_messages": 20},
         "extra_prompt": {"enabled": False, "text": ""},
     }
 
@@ -159,11 +161,47 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(built.request.contexts, [])
         self.assertEqual(built.request.session_id, "p:group:1")
         self.assertIsNone(built.request.func_tool)
+        self.assertIsNone(built.request.tool_set)
+        self.assertIn("tool_set", event.request_llm_kwargs)
+        self.assertNotIn("func_tool", event.request_llm_kwargs)
         self.assertEqual(event.get_extra("ds_request_kind"), "decision")
         self.assertEqual(event.get_extra("ds_decision_format"), "marker")
         self.assertIs(event.get_extra("enable_streaming"), False)
         self.assertTrue(event.call_llm)
         self.assertIsNone(built.wake_meta)
+
+    async def test_request_llm_rejects_removed_func_tool_argument(self):
+        event = FakeEvent()
+        with self.assertRaises(TypeError):
+            event.request_llm(prompt="hello", func_tool=None)
+
+    async def test_decision_uses_max_context_messages_and_normal_uses_history_limit(self):
+        repo = FakeRepo([_message(i) for i in range(5)])
+        config = _base_config()
+        config["context"]["history_limit"] = 2
+        config["decision"]["max_context_messages"] = 3
+
+        await self._build(_builder(repo=repo), FakeEvent(), config, decision=True)
+        await self._build(_builder(repo=repo), FakeEvent(), config, decision=False)
+
+        self.assertEqual(
+            repo.calls[-2:],
+            [("p", "bot", "group", "1", 3), ("p", "bot", "group", "1", 2)],
+        )
+
+    async def test_current_message_is_excluded_from_history_context(self):
+        repo = FakeRepo([_message(0, "m0", "u"), _message(1, "m1", "v")])
+        event = FakeEvent()
+        event.message_obj.message_id = "m1"
+
+        built = await self._build(_builder(repo=repo), event, _base_config())
+
+        self.assertIn("old0", built.request.system_prompt)
+        self.assertNotIn("old1", built.request.system_prompt)
+        self.assertEqual(
+            event.get_extra("ds_history_map"),
+            {1: {"id": "m0", "sender_id": "u"}},
+        )
 
     async def test_json_decision_request(self):
         event = FakeEvent()
@@ -191,9 +229,9 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(event.call_llm)
 
     async def test_history_is_loaded_and_mapped(self):
-        repo = FakeRepo([_message(0, "m0", "u"), _message(1, "m1", "v")])
+        repo = FakeRepo([_message(0, "m0", "u"), _message(1, "m2", "v")])
         config = _base_config()
-        config["context"]["history_limit"] = 2
+        config["decision"]["max_context_messages"] = 2
         event = FakeEvent()
 
         built = await self._build(_builder(repo=repo), event, config)
@@ -203,25 +241,25 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
             event.get_extra("ds_history_map"),
             {
                 1: {"id": "m0", "sender_id": "u"},
-                2: {"id": "m1", "sender_id": "v"},
+                2: {"id": "m2", "sender_id": "v"},
             },
         )
         self.assertIn("old0", built.request.system_prompt)
         self.assertIn("old1", built.request.system_prompt)
 
     async def test_history_map_skips_messages_without_id(self):
-        repo = FakeRepo([_message(0, ""), _message(1, "m1", "v")])
+        repo = FakeRepo([_message(0, ""), _message(1, "m2", "v")])
         event = FakeEvent()
 
         await self._build(_builder(repo=repo), event, _base_config())
 
         self.assertEqual(
             event.get_extra("ds_history_map"),
-            {2: {"id": "m1", "sender_id": "v"}},
+            {2: {"id": "m2", "sender_id": "v"}},
         )
 
     async def test_caption_is_added_for_decision_when_enabled(self):
-        image = types.SimpleNamespace(type="image", url="http://img")
+        image = _Image(url="http://img")
         caption = FakeCaption({"http://img": "一只猫"})
         config = _base_config()
         config["context"]["image_caption"]["enabled"] = True
@@ -237,7 +275,7 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(built.request.image_urls, ["http://img"])
 
     async def test_caption_is_optional(self):
-        image = types.SimpleNamespace(type="image", url="http://img")
+        image = _Image(url="http://img")
         caption = FakeCaption()
         event = FakeEvent([image])
 
@@ -259,11 +297,11 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(built.request.prompt, "[非文本消息]")
 
     async def test_forward_is_rendered_when_enabled(self):
-        forward = types.SimpleNamespace(type="forward", id="f1")
+        forward = _Forward(id="f1")
         renderer = FakeForward()
         config = _base_config()
         config["context"]["forward"]["parse"] = True
-        event = FakeEvent([types.SimpleNamespace(type="plain", text="hi"), forward])
+        event = FakeEvent([_Plain(text="hi"), forward])
 
         built = await self._build(
             _builder(forward_renderer=renderer), event, config

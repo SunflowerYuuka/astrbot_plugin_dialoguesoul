@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import time
 
-from dialoguesoul import config as cfg
-from dialoguesoul.models import ChatKey
+from . import config as cfg
+from .models import ChatKey
 
 
 class Commands:

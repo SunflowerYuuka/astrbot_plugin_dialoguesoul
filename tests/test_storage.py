@@ -229,8 +229,8 @@ class ComponentsTest(unittest.TestCase):
             {"type": "forward", "id": "f1", "chain": [{"type": "plain", "text": "hi"}]},
         )
 
-    def test_component_to_dict_falls_back_to_unknown_type(self):
-        self.assertEqual(component_to_dict(object()), {"type": "unknown"})
+    def test_component_to_dict_falls_back_to_class_name(self):
+        self.assertEqual(component_to_dict(object()), {"type": "object"})
 
     def test_component_to_dict_keeps_path(self):
         self.assertEqual(

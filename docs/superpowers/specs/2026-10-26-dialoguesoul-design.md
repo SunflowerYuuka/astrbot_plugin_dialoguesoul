@@ -105,7 +105,7 @@ v1 不做：
 ### 6.3 决策请求与发送
 
 1. ContextBuilder 组装增强上下文；按 `decision.format` 追加 `marker` 或 `json` 协议。
-2. 设置 `event.call_llm = True` 与 `ds_request_kind=decision`，禁止流式，`req.func_tool` 为空。
+2. 设置 `event.call_llm = True` 与 `ds_request_kind=decision`，禁止流式，`request_llm(tool_set=None)`（AstrBot 4.29 使用 `tool_set`，不使用 `func_tool`）。
 3. 发送决策请求。
 4. AstrBot 注入知识库与第三方记忆后生成。
 5. `on_llm_response` 按格式解析：
@@ -164,8 +164,9 @@ v1 不做：
 
 ### 7.3 唤醒计数
 
-- `wake.max_replies` 统计实际发送成功的唤醒接话次数
-- 模型 ignore、决策失败、发送失败都不消耗次数
+- `wake.max_replies` 按 best-effort 统计进入发送阶段的唤醒接话次数
+- 模型 ignore、决策失败不消耗次数
+- AstrBot 4.29.1 的 `RespondStage` 会吞掉发送异常并仍触发 `after_message_sent`，且没有可靠的失败标志，因此发送失败仍可能消耗次数
 - 总时长和空闲超时仍然照常生效
 
 ## 8. 触发与门控
@@ -200,18 +201,19 @@ v1 不做：
 - `trigger.burst.enabled` 默认关闭
 - `trigger.burst.groups` 配置固定群号，只对这些群生效
 - 最近 `window_seconds` 内消息数超过 `threshold` 时进入突发模式
+- `threshold` 与 `cooldown_seconds` 是全局配置，对所有启用的群生效
 - 突发模式下暂停自主采样，只响应直接 @ / 回复机器人
 - 安静 `cooldown_seconds` 后退出突发模式
 
 ## 9. 唤醒会话
 
-- 激活条件：决策请求发送成功且历史保存成功
+- 激活条件：决策请求进入发送阶段且历史保存成功
 - 状态键：`platform:self_id:chat_type:chat_id`
-- 限制：总时长、最大成功接话次数 `max_replies`、空闲超时；`0` 表示不限
-- 配置作用域：机器人管理员 > 群/私聊 > 全局
-- 只有实际发送成功才增加 `consumed_replies`；ignore/失败不消耗
-- 首次触发在请求时预留 `session_id`，发送成功才创建会话；旧预留不得重开新会话
-- 每次成功发送刷新 `last_activity_at`，不重置已消费次数
+- 限制：总时长、最大接话次数 `max_replies`、空闲超时；`0` 表示不限
+- 配置作用域：机器人管理员 > 群/私聊 > 全局；私聊默认值与全局一致，群覆盖留空表示继承全局
+- `consumed_replies` 按 best-effort 增加；ignore/决策失败不消耗，发送失败可能消耗（AstrBot 4.29.1 无可靠失败标志）
+- 首次触发在请求时预留 `session_id`，进入发送阶段才创建会话；旧预留不得重开新会话
+- 每次接话刷新 `last_activity_at`，不重置已消费次数
 - 达到限制后结束；旧会话的延迟发送不得重开新会话
 - 状态为实例内存，重启清零
 
@@ -282,11 +284,13 @@ CREATE TABLE meta (
 - `trigger.burst.enabled`（默认关闭）、`trigger.burst.groups`（固定群号）、`trigger.burst.threshold`、`trigger.burst.cooldown_seconds`
 - `trigger.probability`、`trigger.keywords`、`trigger.blacklist_keywords`、`trigger.ignored_prefixes`
 - `decision.format`（`marker` / `json`，默认 `marker`）
-- `decision.max_reply_messages`、`decision.min_confidence`、`decision.timeout_ms`、`decision.max_context_messages`、`decision.cooldown_ms`、`decision.max_replies_per_minute`
+- `decision.max_reply_messages`、`decision.min_confidence`、`decision.max_context_messages`、`decision.cooldown_ms`、`decision.max_replies_per_minute`
+- `decision.max_context_messages` 只用于决策请求；普通请求使用 `context.history_limit`
+- 决策超时由 AstrBot 的 provider 负责，插件不提供 `decision.timeout_ms`
 - `wake.enabled`、`wake.duration_seconds`、`wake.max_replies`、`wake.idle_timeout_seconds`、`wake.private`、`wake.admin`、`wake.groups`
 - `context.history_limit`、`context.image_caption.*`、`context.forward.*`
 - `context.summary.enabled`（默认关闭）、`context.summary.provider_id`、`context.summary.threshold`（默认 20）
-- `persona`、`extra_prompt`
+- `persona`（`persona.name` 指定人格，找不到时回退默认）、`extra_prompt`
 - `storage.retention_days`、`storage.retention_count`
 
 群聊唤醒覆盖使用 `template_list`，避免动态对象导致 WebUI 无法编辑。
@@ -376,7 +380,7 @@ astrbot_plugin_dialoguesoul/
 | 插件请求未产生发送时触发默认 LLM 重复生成 | 发送请求前设置 `event.call_llm = True`，由插件独占本次 LLM |
 | 核心配置仍自动添加工具 | 决策请求禁用流式并提示只输出 JSON；解析失败按 ignore |
 | 第三方钩子把 JSON 当回复记录 | 高优先级 `on_llm_response` 先改写为真实文本 |
-| 知识库检索增加延迟 | 设置决策超时；可用较低成本模型 |
+| 知识库检索增加延迟 | 决策超时由 AstrBot provider 负责；可用较低成本模型 |
 | SQLite 并发写锁 | WAL、busy_timeout、单连接串行写 |
 | 旧 JSON 导入损坏 | 单文件失败跳过并记录，不阻断启动 |
 

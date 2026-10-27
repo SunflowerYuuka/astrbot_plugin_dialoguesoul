@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import inspect
 
-from dialoguesoul import config as cfg
-from dialoguesoul.context.forwards import ForwardRenderer
-from dialoguesoul.context.images import CaptionService
-from dialoguesoul.context.summary import SummaryService
-from dialoguesoul.interest import InterestJudge
+from .. import config as cfg
+from ..interest import InterestJudge
+from .forwards import ForwardRenderer
+from .images import CaptionService
+from .summary import SummaryService
 
 
 async def _provider(context, umo: str, provider_id: str):

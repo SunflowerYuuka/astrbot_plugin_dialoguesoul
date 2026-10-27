@@ -72,6 +72,9 @@ class MainWiringTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(hasattr(getattr(cls, name), f"__{name}__"))
         for name in ("help", "history", "reset", "mute", "unmute", "status"):
             self.assertTrue(hasattr(getattr(cls, name), "__command__"))
+        self.assertEqual(
+            cls.on_decorating_result.__on_decorating_result__[1]["priority"], 10000
+        )
 
     def test_destructive_commands_require_admin(self):
         module = load_plugin_main()

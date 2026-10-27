@@ -2,18 +2,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from dialoguesoul import config as cfg
-from dialoguesoul.context.components import (
+from . import config as cfg
+from .context.components import (
     collect_forward_ids,
     collect_image_urls,
     component_to_dict,
+    exclude_current_message,
 )
-from dialoguesoul.context.prompt import (
+from .context.prompt import (
     build_environment,
     build_system_prompt,
     format_history,
 )
-from dialoguesoul.models import ChatKey
+from .models import ChatKey
+
+
+def history_limit(config, decision: bool) -> int:
+    path = "decision.max_context_messages" if decision else "context.history_limit"
+    return int(cfg.get(config, path, 20))
 
 
 @dataclass
@@ -51,8 +57,10 @@ class RequestBuilder:
         summary_service=None,
     ) -> BuiltRequest:
         key = ChatKey.from_event(event)
-        limit = int(cfg.get(config, "context.history_limit", 20))
-        history = await self.repo.recent(*key.as_tuple(), limit)
+        limit = history_limit(config, decision)
+        history = exclude_current_message(
+            await self.repo.recent(*key.as_tuple(), limit), event
+        )
         history_text = format_history(history)
         history_map = {
             index: {"id": message.message_id, "sender_id": message.sender_id}
@@ -125,7 +133,7 @@ class RequestBuilder:
             contexts=[],
             system_prompt=system_prompt,
             image_urls=image_urls,
-            func_tool=None,
+            tool_set=None,
         )
         request.session_id = event.unified_msg_origin
         event.call_llm = True

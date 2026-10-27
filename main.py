@@ -50,7 +50,7 @@ class DialoguesSoul(Star):
     async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse):
         self.core.hooks.on_llm_response(event, resp)
 
-    @filter.on_decorating_result()
+    @filter.on_decorating_result(priority=10000)
     async def on_decorating_result(self, event: AstrMessageEvent):
         await self.core.hooks.on_decorating_result(event)
 

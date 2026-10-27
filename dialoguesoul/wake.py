@@ -3,8 +3,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from dialoguesoul import config as cfg
-from dialoguesoul.models import ChatKey
+from . import config as cfg
+from .models import ChatKey
 
 _RESERVATION_TTL = 60.0
 

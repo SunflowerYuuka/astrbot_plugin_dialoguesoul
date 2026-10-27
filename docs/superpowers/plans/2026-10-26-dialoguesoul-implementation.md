@@ -17,7 +17,7 @@
 - 不针对 LivingMemory 或其他具体插件写适配代码。
 - 不绑定 `req.conversation`。
 - 发送请求前设置 `event.call_llm = True`。
-- 决策请求禁用流式，`func_tool` 保持空。
+- 决策请求禁用流式，`request_llm(tool_set=None)`（AstrBot 4.29 使用 `tool_set`，不使用 `func_tool`）。
 - 历史存储使用 SQLite；旧 JSON 自动导入一次。
 - 指令前缀 `/ds`。
 - 测试命令：`python -m unittest discover -s tests -t .`。
@@ -58,6 +58,14 @@
 ```python
 "summary": {"enabled": False, "provider_id": "", "threshold": 20},
 ```
+
+补充约定：
+
+- `decision.max_context_messages` 只用于决策请求的历史条数；普通请求使用 `context.history_limit`。
+- `persona.name` 选择指定人格；名称为空或找不到时回退默认人格。
+- `trigger.burst.threshold` 与 `trigger.burst.cooldown_seconds` 是全局配置，对所有启用的群生效。
+- 不提供 `decision.timeout_ms`；请求超时由 AstrBot provider 负责。
+- 当前触发消息会同时作为 prompt，因此从提示词历史中排除，避免重复。
 
 ### 2.2 门控拆分
 
@@ -732,7 +740,8 @@ class _ProviderRequest:
         self.system_prompt = kwargs.get("system_prompt", "")
         self.contexts = kwargs.get("contexts", [])
         self.image_urls = kwargs.get("image_urls", [])
-        self.func_tool = kwargs.get("func_tool")
+        self.func_tool = kwargs.get("tool_set")
+        self.tool_set = kwargs.get("tool_set")
         self.session_id = kwargs.get("session_id", "")
         self.conversation = None
 
@@ -928,7 +937,6 @@ DEFAULTS: dict[str, Any] = {
     "decision": {
         "max_reply_messages": 3,
         "min_confidence": 0.55,
-        "timeout_ms": 2000,
         "max_context_messages": 20,
         "cooldown_ms": 3000,
         "max_replies_per_minute": 6,
@@ -1016,8 +1024,7 @@ def chat_enabled(event, config) -> bool:
     "items": {
       "max_reply_messages": {"description": "最多回复条数", "type": "int", "default": 3},
       "min_confidence": {"description": "最低置信度", "type": "float", "default": 0.55},
-      "timeout_ms": {"description": "单次超时（毫秒）", "type": "int", "default": 2000},
-      "max_context_messages": {"description": "上下文消息数", "type": "int", "default": 20},
+      "max_context_messages": {"description": "决策上下文消息数", "type": "int", "default": 20},
       "cooldown_ms": {"description": "回复冷却（毫秒）", "type": "int", "default": 3000},
       "max_replies_per_minute": {"description": "每分钟上限", "type": "int", "default": 6}
     }
@@ -2726,7 +2733,7 @@ class RequestBuilder:
             contexts=[],
             system_prompt=system_prompt,
             image_urls=image_urls,
-            func_tool=None,
+            tool_set=None,
         )
         request.session_id = event.unified_msg_origin
         event.set_extra("ds_request_kind", "decision" if decision else "normal")

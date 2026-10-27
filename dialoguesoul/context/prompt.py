@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dialoguesoul.decision import build_decision_instruction, build_marker_instruction
-from dialoguesoul.models import ChatMessage
+from ..decision import build_decision_instruction, build_marker_instruction
+from ..models import ChatMessage
 
 
 def build_environment(event) -> str:

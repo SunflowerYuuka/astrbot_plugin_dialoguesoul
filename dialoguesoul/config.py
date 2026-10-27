@@ -27,7 +27,6 @@ DEFAULTS: dict[str, Any] = {
         "format": "marker",
         "max_reply_messages": 3,
         "min_confidence": 0.55,
-        "timeout_ms": 2000,
         "max_context_messages": 20,
         "cooldown_ms": 3000,
         "max_replies_per_minute": 6,
@@ -110,6 +109,8 @@ def mute_until(config, key) -> float:
 
 
 def chat_enabled(event, config) -> bool:
+    if not get(config, "enabled", False):
+        return False
     if event.is_private_chat():
         return bool(get(config, "enabled_private", False))
     group_id = str(event.get_group_id() or "").strip()

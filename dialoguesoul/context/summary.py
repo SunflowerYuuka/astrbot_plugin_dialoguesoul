@@ -11,4 +11,7 @@ class SummaryService:
     async def summarize(self, messages, umo: str, fallback: str) -> str:
         if self.summarizer is None or len(messages) < self.threshold:
             return fallback
-        return await self.summarizer(umo, fallback)
+        try:
+            return await self.summarizer(umo, fallback)
+        except Exception:
+            return fallback

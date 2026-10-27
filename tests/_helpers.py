@@ -1,7 +1,18 @@
 import importlib.util
 import sys
 import types
+from enum import Enum
 from pathlib import Path
+
+
+class ComponentType(str, Enum):
+    Plain = "Plain"
+    Image = "Image"
+    At = "At"
+    Reply = "Reply"
+    Forward = "Forward"
+    Node = "Node"
+    Nodes = "Nodes"
 
 
 class _Star:
@@ -39,19 +50,51 @@ def _command_group(*args, **kwargs):
 
 
 class _Plain:
-    def __init__(self, text=""):
+    type = ComponentType.Plain
+
+    def __init__(self, text="", **kwargs):
         self.text = text
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
 
 class _At:
-    def __init__(self, qq=""):
+    type = ComponentType.At
+
+    def __init__(self, qq="", **kwargs):
         self.qq = qq
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
 
 class _Reply:
-    def __init__(self, id="", sender_id=""):
+    type = ComponentType.Reply
+
+    def __init__(self, id="", sender_id="", **kwargs):
         self.id = id
         self.sender_id = sender_id
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+
+class _Image:
+    type = ComponentType.Image
+
+    def __init__(self, file="", url="", path="", **kwargs):
+        self.file = file
+        self.url = url
+        self.path = path
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+
+class _Forward:
+    type = ComponentType.Forward
+
+    def __init__(self, id="", **kwargs):
+        self.id = id
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
 
 class _MessageChain:
@@ -60,14 +103,67 @@ class _MessageChain:
 
 
 class _ProviderRequest:
-    def __init__(self, **kwargs):
-        self.prompt = kwargs.get("prompt", "")
-        self.system_prompt = kwargs.get("system_prompt", "")
-        self.contexts = kwargs.get("contexts", [])
-        self.image_urls = kwargs.get("image_urls", [])
-        self.func_tool = kwargs.get("func_tool")
-        self.session_id = kwargs.get("session_id", "")
-        self.conversation = None
+    def __init__(
+        self,
+        prompt="",
+        func_tool=None,
+        tool_set=None,
+        session_id="",
+        image_urls=None,
+        audio_urls=None,
+        contexts=None,
+        system_prompt="",
+        conversation=None,
+    ):
+        self.prompt = prompt
+        self.system_prompt = system_prompt
+        self.contexts = list(contexts or [])
+        self.image_urls = list(image_urls or [])
+        self.audio_urls = list(audio_urls or [])
+        self.func_tool = tool_set if tool_set is not None else func_tool
+        self.tool_set = tool_set
+        self.session_id = session_id
+        self.conversation = conversation
+
+
+class RequestLLMMixin:
+    """Mirror AstrMessageEvent.request_llm from AstrBot 4.29.1."""
+
+    def request_llm(
+        self,
+        prompt,
+        func_tool_manager=None,
+        tool_set=None,
+        session_id="",
+        image_urls=None,
+        audio_urls=None,
+        contexts=None,
+        system_prompt="",
+        conversation=None,
+    ):
+        self.request_llm_kwargs = {
+            "prompt": prompt,
+            "func_tool_manager": func_tool_manager,
+            "tool_set": tool_set,
+            "session_id": session_id,
+            "image_urls": image_urls,
+            "audio_urls": audio_urls,
+            "contexts": contexts,
+            "system_prompt": system_prompt,
+            "conversation": conversation,
+        }
+        self.request = _ProviderRequest(
+            prompt=prompt,
+            func_tool=func_tool_manager,
+            tool_set=tool_set,
+            session_id=session_id,
+            image_urls=image_urls,
+            audio_urls=audio_urls,
+            contexts=contexts,
+            system_prompt=system_prompt,
+            conversation=conversation,
+        )
+        return self.request
 
 
 def install_astrbot_stub():
@@ -79,7 +175,10 @@ def install_astrbot_stub():
     all_mod.Plain = _Plain
     all_mod.At = _At
     all_mod.Reply = _Reply
+    all_mod.Image = _Image
+    all_mod.Forward = _Forward
     all_mod.MessageChain = _MessageChain
+    all_mod.ComponentType = ComponentType
     all_mod.Star = _Star
     all_mod.Context = object
     all_mod.AstrBotConfig = dict
@@ -126,6 +225,9 @@ def install_astrbot_stub():
     components.Plain = _Plain
     components.At = _At
     components.Reply = _Reply
+    components.Image = _Image
+    components.Forward = _Forward
+    components.ComponentType = ComponentType
 
 
 def load_plugin_main():

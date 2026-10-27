@@ -48,7 +48,7 @@
 |---|---|
 | `enabled` / `enable_all_groups` / `enabled_groups` / `blocked_groups` / `enabled_private` | 总开关与聊天范围。 |
 | `trigger` | 触发策略、窗口、概率、关键词、黑名单、忽略前缀与刷屏保护。 |
-| `decision` | 决策格式、最大回复条数、最低置信度、冷却与每分钟上限。 |
+| `decision` | 决策格式、最大回复条数、最低置信度、决策上下文条数、冷却与每分钟上限。 |
 | `wake` | 唤醒会话开关与限制，以及私聊、管理员和指定群覆盖。 |
 | `context` | 最近历史、图片转述、合并转发与上下文摘要。 |
 | `persona` / `extra_prompt` | 人格注入与附加提示词。 |
@@ -69,7 +69,7 @@
 
 - 直接 @ / 回复机器人的优先级高于触发策略，通常走普通请求；唤醒会话活跃时则进入唤醒决策。
 - 唤醒会话活跃时，通过硬门控的消息直接进入决策，不受窗口或兴趣策略限制。
-- `trigger.burst` 可对指定群启用刷屏保护：30 秒内消息达到阈值后暂停自主采样，安静 `cooldown_seconds` 后恢复；直接 @ 仍可触发。
+- `trigger.burst` 可对指定群启用刷屏保护：30 秒内消息达到阈值后暂停自主采样，安静 `cooldown_seconds` 后恢复；直接 @ 仍可触发。`threshold` 与 `cooldown_seconds` 是全局配置，对所有启用了刷屏保护的群生效。
 - `trigger.probability` 与 `trigger.keywords` 仅在 `rules` 策略下参与触发判定；`trigger.blacklist_keywords`、`trigger.ignored_prefixes` 对所有策略生效。
 
 ## 决策格式
@@ -108,23 +108,24 @@
 
 ## 唤醒会话
 
-开启 `wake.enabled` 后，一次成功的决策回复可以启动唤醒会话。会话期间通过硬门控的消息会继续进入决策，直到达到限制：
+开启 `wake.enabled` 后，一次进入发送阶段的决策回复可以启动唤醒会话。会话期间通过硬门控的消息会继续进入决策，直到达到限制：
 
 - `wake.duration_seconds`：总时长，`0` 表示不限。
 - `wake.idle_timeout_seconds`：空闲超时，`0` 表示不限。
-- `wake.max_replies`：最多成功回复次数，默认 `5`，`0` 表示不限。只有实际发送成功的唤醒接话才计数；模型忽略、决策失败或发送失败都不消耗次数。
+- `wake.max_replies`：最多回复次数，默认 `5`，`0` 表示不限。模型忽略、决策失败不消耗次数。AstrBot 4.29.1 的发送阶段不提供可靠的失败标志，因此插件按“进入发送阶段且结果链非空”做 best-effort 计数，发送失败仍可能消耗次数。
 - 达到任意限制后会话结束；旧的延迟发送不会重新开启已结束的会话。
-- `wake.private`、`wake.admin`、`wake.groups` 可分别覆盖私聊、管理员和指定群的限制，管理员优先级最高。群覆盖通过 `template_list` 配置。
+- `wake.private`、`wake.admin`、`wake.groups` 可分别覆盖私聊、管理员和指定群的限制，管理员优先级最高。私聊默认值与全局一致；群覆盖中留空表示继承全局，通过 `template_list` 配置。
 
 唤醒会话状态保存在进程内存中，重启后清零。
 
 ## 上下文与存储
 
-- `context.history_limit`：每次请求读取的最近历史条数，默认 20。
+- `context.history_limit`：普通请求读取的最近历史条数，默认 20。
+- `decision.max_context_messages`：决策请求读取的最近历史条数，默认 20。当前触发消息本身会作为 prompt 发送，因此会从历史中排除，避免重复。
 - `context.image_caption`：可选的图片转述。开启后，决策请求会先调用指定或当前 provider 生成图片描述，并把描述与原始图片一起交给模型；支持并发限制与进程内 LRU 缓存。
 - `context.forward.parse`：可选的合并转发解析。开启后读取当前消息中的合并转发，按 `max_depth`、`max_nodes`、`max_chars`、`timeout` 限制展开；失败时使用占位文本。
 - `context.summary`：可选的上下文摘要。历史条数达到 `threshold`（默认 20）时调用指定或当前 provider 生成摘要，失败时回退到原始历史。
-- `persona`：从 AstrBot 读取并注入人格；`extra_prompt` 仅对当前请求生效。
+- `persona`：从 AstrBot 读取并注入人格；`persona.name` 指定人格名称，留空或找不到时使用默认人格。`extra_prompt` 仅对当前请求生效。
 - `storage.db_path`：SQLite 路径，留空时使用插件数据目录下的 `dialoguesoul.sqlite3`。
 - `storage.retention_days` / `storage.retention_count`：按时间或每个聊天的条数清理最近历史，`0` 表示不限。
 

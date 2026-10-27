@@ -1,12 +1,22 @@
 import types
 import unittest
 
-from tests._helpers import install_astrbot_stub
+from tests._helpers import (
+    ComponentType,
+    _Forward,
+    _Image,
+    _Plain,
+    install_astrbot_stub,
+)
 
 install_astrbot_stub()
 
 from dialoguesoul.context.components import (
-    collect_forward_ids, collect_image_urls, collect_text, component_to_dict,
+    collect_forward_ids,
+    collect_image_urls,
+    collect_text,
+    component_to_dict,
+    normalize_component_type,
 )
 from dialoguesoul.context.persona import resolve_persona_prompt
 from dialoguesoul.context.prompt import build_environment, build_system_prompt, format_history
@@ -21,13 +31,31 @@ def _message(index, components):
 
 class ContextTest(unittest.TestCase):
     def test_component_dict_and_collectors(self):
-        plain = types.SimpleNamespace(type="plain", text="hello")
-        image = types.SimpleNamespace(type="image", url="http://img")
-        forward = types.SimpleNamespace(type="forward", id="f1")
-        self.assertEqual(component_to_dict(plain)["text"], "hello")
+        plain = _Plain(text="hello")
+        image = _Image(url="http://img")
+        forward = _Forward(id="f1")
+        self.assertEqual(component_to_dict(plain), {"type": "plain", "text": "hello"})
         self.assertEqual(collect_text([plain, image]), "hello")
         self.assertEqual(collect_image_urls([image]), ["http://img"])
         self.assertEqual(collect_forward_ids([forward]), ["f1"])
+
+    def test_component_type_enum_and_dict_text_are_normalized(self):
+        plain = types.SimpleNamespace(type=ComponentType.Plain, text="hello")
+        image = types.SimpleNamespace(type=ComponentType.Image, url="http://img")
+        self.assertEqual(normalize_component_type(plain), "plain")
+        self.assertEqual(normalize_component_type(image), "image")
+        self.assertEqual(
+            component_to_dict({"type": "text", "text": "hi"}),
+            {"type": "plain", "text": "hi"},
+        )
+        self.assertEqual(collect_text([{"type": "text", "text": "hi"}]), "hi")
+
+    def test_component_type_falls_back_to_class_name(self):
+        class Plain:
+            text = "fallback"
+
+        self.assertEqual(normalize_component_type(Plain()), "plain")
+        self.assertEqual(component_to_dict(Plain()), {"type": "plain", "text": "fallback"})
 
     def test_format_history_numbers_messages(self):
         msgs = [
@@ -88,6 +116,34 @@ class PersonaTest(unittest.IsolatedAsyncioTestCase):
         context = types.SimpleNamespace(persona_manager=manager)
         self.assertEqual(await resolve_persona_prompt(context, self._event(), {}), "人格内容")
         self.assertEqual(manager.umo, "p:bot:group:1")
+
+    async def test_named_persona_is_selected_when_configured(self):
+        class Manager:
+            def get_persona_v3_by_id(self, persona_id):
+                return {"prompt": f"人格:{persona_id}"}
+
+            async def get_default_persona_v3(self, umo=""):
+                return {"prompt": "默认人格"}
+
+        context = types.SimpleNamespace(persona_manager=Manager())
+        config = {"persona": {"enabled": True, "name": "小猫"}}
+        self.assertEqual(
+            await resolve_persona_prompt(context, self._event(), config), "人格:小猫"
+        )
+
+    async def test_unknown_named_persona_falls_back_to_default(self):
+        class Manager:
+            def get_persona_v3_by_id(self, persona_id):
+                return None
+
+            async def get_default_persona_v3(self, umo=""):
+                return {"prompt": "默认人格"}
+
+        context = types.SimpleNamespace(persona_manager=Manager())
+        config = {"persona": {"enabled": True, "name": "不存在"}}
+        self.assertEqual(
+            await resolve_persona_prompt(context, self._event(), config), "默认人格"
+        )
 
     async def test_manager_errors_return_empty(self):
         class Manager:

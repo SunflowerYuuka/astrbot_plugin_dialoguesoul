@@ -5,8 +5,8 @@ import re
 import time
 from dataclasses import dataclass
 
-from dialoguesoul import config as cfg
-from dialoguesoul.models import ChatKey
+from . import config as cfg
+from .models import ChatKey
 
 _QUESTION = re.compile(r"[?？]|^(吗|呢|怎么|为什么|如何|什么|谁|哪|几|多少|是不是|能不能|可不可以)")
 _RATE_WINDOW = 60.0

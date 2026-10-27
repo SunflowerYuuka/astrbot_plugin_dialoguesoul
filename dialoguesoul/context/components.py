@@ -2,22 +2,40 @@ from __future__ import annotations
 
 import time
 
-from dialoguesoul.models import ChatKey, ChatMessage
+from ..models import ChatKey, ChatMessage
 
 _SCALAR_FIELDS = ("text", "url", "file", "path", "id", "qq", "sender_id", "name")
 _RECURSIVE_FIELDS = ("chain", "nodes")
 _IMAGE_SOURCE_FIELDS = ("url", "file", "path")
 
 
+def normalize_component_type(component) -> str:
+    """Normalize component type names across AstrBot enums and dict payloads."""
+    if isinstance(component, dict):
+        raw = component.get("type")
+    else:
+        raw = getattr(component, "type", None)
+    value = getattr(raw, "value", raw)
+    if value is None:
+        value = type(component).__name__
+    name = str(value).strip().lower()
+    if not name:
+        name = type(component).__name__.lower()
+    if name == "text":
+        name = "plain"
+    return name
+
+
 def component_to_dict(component) -> dict:
     if isinstance(component, dict):
         data = dict(component)
+        data["type"] = normalize_component_type(component)
         for name in _RECURSIVE_FIELDS:
             items = data.get(name)
             if isinstance(items, (list, tuple)):
                 data[name] = [component_to_dict(item) for item in items]
         return data
-    data = {"type": str(getattr(component, "type", "unknown") or "unknown")}
+    data = {"type": normalize_component_type(component)}
     for name in _SCALAR_FIELDS:
         value = getattr(component, name, None)
         if value is not None:
@@ -30,7 +48,7 @@ def component_to_dict(component) -> dict:
 
 
 def _as_dict(component) -> dict:
-    return component if isinstance(component, dict) else component_to_dict(component)
+    return component_to_dict(component)
 
 
 def collect_text(components) -> str:
@@ -62,6 +80,14 @@ def collect_forward_ids(components) -> list[str]:
         for c in map(_as_dict, components)
         if c.get("type") == "forward" and c.get("id")
     ]
+
+
+def exclude_current_message(messages, event) -> list[ChatMessage]:
+    """Drop the triggering message from history because it is already the prompt."""
+    current_id = str(getattr(getattr(event, "message_obj", None), "message_id", "") or "")
+    if not current_id:
+        return list(messages)
+    return [message for message in messages if str(message.message_id) != current_id]
 
 
 def user_message_from_event(event) -> ChatMessage:

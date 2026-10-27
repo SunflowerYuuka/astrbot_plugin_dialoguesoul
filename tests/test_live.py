@@ -22,6 +22,11 @@ class Provider:
         return types.SimpleNamespace(completion_text=self.text)
 
 
+class FailingProvider:
+    async def text_chat(self, **kwargs):
+        raise RuntimeError("provider down")
+
+
 class Context:
     def __init__(self, current=None, by_id=None):
         self.current = current
@@ -121,6 +126,37 @@ class LiveServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_interest_judge_disabled_for_other_strategies(self):
         config = {"trigger": {"strategy": "window", "interest": {"provider_id": ""}}}
         self.assertIsNone(build_interest_judge(Context(), config))
+
+    async def test_interest_judge_provider_errors_degrade_to_false(self):
+        context = Context(by_id=FailingProvider())
+        config = {
+            "trigger": {
+                "strategy": "interest",
+                "interest": {"provider_id": "judge"},
+            }
+        }
+        event = types.SimpleNamespace(
+            unified_msg_origin="umo",
+            get_message_outline=lambda: "当前消息",
+        )
+        judge = build_interest_judge(context, config)
+        self.assertFalse(await judge(event, "最近聊天"))
+
+    async def test_caption_provider_errors_are_skipped(self):
+        context = Context(by_id=FailingProvider())
+        config = {
+            "context": {
+                "image_caption": {
+                    "enabled": True,
+                    "provider_id": "vision",
+                    "prompt": "描述图片",
+                    "concurrency": 1,
+                    "cache_size": 4,
+                }
+            }
+        }
+        service = build_caption_service(context, config)
+        self.assertEqual(await service.caption(["http://img"], umo="umo"), {})
 
 
 if __name__ == "__main__":

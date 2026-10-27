@@ -3,15 +3,16 @@ from __future__ import annotations
 import time
 import uuid
 
-from dialoguesoul import config as cfg
-from dialoguesoul.context.components import component_to_dict
-from dialoguesoul.decision import (
+from . import config as cfg
+from .context.components import component_to_dict
+from .decision import (
+    Decision,
     parse_decision,
     parse_marker,
     rewrite_marker_response,
     rewrite_response,
 )
-from dialoguesoul.models import ChatKey, ChatMessage
+from .models import ChatKey, ChatMessage
 
 _MARKER = "marker"
 
@@ -21,13 +22,21 @@ def _decision_format(event) -> str:
 
 
 class Hooks:
-    def __init__(self, repo, wake, config):
+    def __init__(self, repo, wake, config, gate=None):
         self.repo = repo
         self.wake = wake
         self.config = config
+        self.gate = gate
 
     def on_llm_response(self, event, resp):
         if event.get_extra("ds_request_kind") != "decision":
+            return
+        role = getattr(resp, "role", "assistant")
+        if role != "assistant":
+            event.set_extra(
+                "ds_decision", Decision("ignore", f"role:{role}", [], 0.0, None)
+            )
+            resp.completion_text = ""
             return
         text = getattr(resp, "completion_text", "") or ""
         if _decision_format(event) == _MARKER:
@@ -69,6 +78,15 @@ class Hooks:
         result.chain = chain
 
     async def after_message_sent(self, event):
+        """Record a sent reply and advance per-chat/wake state.
+
+        AstrBot 4.29.1's ``RespondStage`` catches adapter send exceptions and
+        still emits ``after_message_sent``; ``_has_send_oper`` is also set
+        before the adapter call completes. There is no reliable failure flag,
+        so delivery accounting here is best-effort: we only require a
+        non-empty decorated result chain (the stage skips this hook for empty
+        chains). A failed adapter send may therefore consume a wake reply.
+        """
         if not self.repo:
             return
         if event.get_extra("ds_request_kind") not in ("normal", "decision"):
@@ -92,6 +110,8 @@ class Hooks:
             timestamp=now,
             components=[component_to_dict(component) for component in chain],
         )
+        if self.gate is not None:
+            self.gate.record_reply(event)
         await self.repo.append(message)
 
         try:

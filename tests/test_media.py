@@ -218,3 +218,10 @@ class SummaryServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_summary_disabled_returns_fallback(self):
         service = SummaryService(summarizer=None, threshold=1)
         self.assertEqual(await service.summarize(["m1"], "u", "fallback"), "fallback")
+
+    async def test_summary_failure_returns_fallback(self):
+        async def summarizer(umo, fallback):
+            raise RuntimeError("provider down")
+
+        service = SummaryService(summarizer=summarizer, threshold=1)
+        self.assertEqual(await service.summarize(["m1"], "u", "fallback"), "fallback")

@@ -4,9 +4,9 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 
-from dialoguesoul import config as cfg
-from dialoguesoul.gate import GateResult
-from dialoguesoul.models import ChatKey
+from . import config as cfg
+from .gate import GateResult
+from .models import ChatKey
 
 
 @dataclass(frozen=True)

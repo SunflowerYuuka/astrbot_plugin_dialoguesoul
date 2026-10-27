@@ -4,22 +4,22 @@ import asyncio
 import time
 import uuid
 
-from dialoguesoul import config as cfg
-from dialoguesoul.context.components import user_message_from_event
-from dialoguesoul.context.live import (
+from . import config as cfg
+from .context.components import exclude_current_message, user_message_from_event
+from .context.live import (
     build_caption_service,
     build_forward_renderer,
     build_interest_judge,
     build_summary_service,
 )
-from dialoguesoul.context.persona import resolve_persona_prompt
-from dialoguesoul.context.prompt import format_history
-from dialoguesoul.gate import Gate
-from dialoguesoul.hooks import Hooks
-from dialoguesoul.models import ChatKey
-from dialoguesoul.request_builder import RequestBuilder
-from dialoguesoul.strategy import StrategyEngine
-from dialoguesoul.wake import WakeManager
+from .context.persona import resolve_persona_prompt
+from .context.prompt import format_history
+from .gate import Gate
+from .hooks import Hooks
+from .models import ChatKey
+from .request_builder import RequestBuilder, history_limit
+from .strategy import StrategyEngine
+from .wake import WakeManager
 
 
 class DialoguesSoulPlugin:
@@ -34,7 +34,7 @@ class DialoguesSoulPlugin:
             self.wake,
             interest_judge=build_interest_judge(context, config),
         )
-        self.hooks = Hooks(repo, self.wake, config)
+        self.hooks = Hooks(repo, self.wake, config, gate=self.gate)
         self.builder = RequestBuilder(
             repo=repo,
             persona_resolver=resolve_persona_prompt,
@@ -63,6 +63,7 @@ class DialoguesSoulPlugin:
         return removed
 
     async def handle_message(self, event):
+        self.wake.clear_expired()
         key = ChatKey.from_event(event).as_tuple()
         if cfg.chat_enabled(event, self.config) and str(event.get_sender_id()) != str(
             event.get_self_id()
@@ -79,8 +80,10 @@ class DialoguesSoulPlugin:
             return
         async with lock:
             self._lock_seen[key] = time.time()
-            limit = int(cfg.get(self.config, "context.history_limit", 20))
-            history = await self.repo.recent(*key, limit)
+            limit = history_limit(self.config, True)
+            history = exclude_current_message(
+                await self.repo.recent(*key, limit), event
+            )
             history_text = format_history(history)
             route = await self.strategy.route(
                 event, self.config, history_text=history_text

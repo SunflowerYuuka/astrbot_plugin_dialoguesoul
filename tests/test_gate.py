@@ -1,7 +1,7 @@
 import types
 import unittest
 
-from tests._helpers import install_astrbot_stub
+from tests._helpers import _At, install_astrbot_stub
 
 install_astrbot_stub()
 
@@ -36,7 +36,7 @@ class E:
 
 
 def mention(text="hi", message_id="m1"):
-    return E(text, [types.SimpleNamespace(qq="bot")], message_id=message_id)
+    return E(text, [_At(qq="bot")], message_id=message_id)
 
 
 def config(**overrides):

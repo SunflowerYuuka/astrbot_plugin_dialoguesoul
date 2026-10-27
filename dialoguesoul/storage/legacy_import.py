@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dialoguesoul.context.components import component_to_dict
-from dialoguesoul.models import ChatMessage
+from ..context.components import component_to_dict
+from ..models import ChatMessage
 
 try:  # pragma: no cover - 依赖缺失时降级为不导入
     import jsonpickle

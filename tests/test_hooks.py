@@ -2,7 +2,7 @@ import types
 import unittest
 from unittest import mock
 
-from tests._helpers import install_astrbot_stub
+from tests._helpers import _Plain, install_astrbot_stub
 
 install_astrbot_stub()
 
@@ -112,6 +112,14 @@ class HooksTest(unittest.IsolatedAsyncioTestCase):
         )
         hooks.on_llm_response(event, resp)
         self.assertEqual(resp.completion_text, "")
+
+    def test_error_role_forces_ignore_and_blank_text(self):
+        hooks = Hooks(repo=None, wake=None, config={})
+        event = _Event({"ds_request_kind": "decision"})
+        resp = types.SimpleNamespace(completion_text="出错信息", role="err")
+        hooks.on_llm_response(event, resp)
+        self.assertEqual(resp.completion_text, "")
+        self.assertEqual(event.get_extra("ds_decision").action, "ignore")
 
     async def test_marker_reply_leaves_natural_chain_untouched(self):
         hooks = Hooks(repo=None, wake=None, config={})
@@ -252,6 +260,37 @@ class HooksTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(repo.messages), 1)
         self.assertEqual(repo.messages[0].components, [{"type": "plain", "text": "hi"}])
         self.assertEqual(wake.get(key).consumed_replies, 1)
+
+    async def test_empty_result_does_not_record_delivery(self):
+        repo = _Repo()
+        wake = _WakeRecorder()
+        limits = WakeLimits(300, 2, 120)
+        event = _Event(
+            {
+                "ds_request_kind": "decision",
+                "ds_wake": {"session_id": "s1", "limits": limits, "starts_session": True},
+            },
+            result=types.SimpleNamespace(chain=[]),
+        )
+        await Hooks(repo=repo, wake=wake, config={}).after_message_sent(event)
+        self.assertEqual(repo.messages, [])
+        self.assertEqual(wake.deliveries, [])
+
+    async def test_successful_send_records_reply_on_injected_gate(self):
+        class GateRecorder:
+            def __init__(self):
+                self.events = []
+
+            def record_reply(self, event):
+                self.events.append(event)
+
+        gate = GateRecorder()
+        event = _Event(
+            {"ds_request_kind": "normal"},
+            result=types.SimpleNamespace(chain=[_Plain(text="hi")]),
+        )
+        await Hooks(repo=_Repo(), wake=None, config={}, gate=gate).after_message_sent(event)
+        self.assertEqual(gate.events, [event])
 
     async def _run_wake_delivery(self, wake_meta):
         repo = _Repo()

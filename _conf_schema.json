@@ -84,12 +84,13 @@
           },
           "threshold": {
             "description": "刷屏判定条数",
-            "hint": "30 秒内消息数达到该值视为刷屏",
+            "hint": "所有启用刷屏保护的群共用该阈值；30 秒内消息数达到该值视为刷屏",
             "type": "int",
             "default": 50
           },
           "cooldown_seconds": {
             "description": "刷屏静默时长（秒）",
+            "hint": "所有启用刷屏保护的群共用该静默时长",
             "type": "int",
             "default": 30
           }
@@ -138,11 +139,6 @@
         "type": "float",
         "default": 0.55
       },
-      "timeout_ms": {
-        "description": "单次超时（毫秒）",
-        "type": "int",
-        "default": 2000
-      },
       "max_context_messages": {
         "description": "上下文消息数",
         "type": "int",
@@ -177,7 +173,7 @@
       },
       "max_replies": {
         "description": "最多回复条数",
-        "hint": "唤醒会话期间最多成功回复的次数，0 表示不限",
+        "hint": "唤醒会话期间最多回复次数（best-effort），0 表示不限",
         "type": "int",
         "default": 5
       },
@@ -189,7 +185,7 @@
       },
       "private": {
         "description": "私聊覆盖",
-        "hint": "留空继承全局；三项均 0 表示不限",
+        "hint": "私聊默认与全局一致；三项均 0 表示不限",
         "type": "object",
         "items": {
           "duration_seconds": {
@@ -314,6 +310,7 @@
           "provider_id": {
             "description": "转述 Provider ID，留空用当前",
             "type": "string",
+            "_special": "select_provider",
             "default": ""
           },
           "prompt": {

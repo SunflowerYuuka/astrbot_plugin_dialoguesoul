@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+import inspect
+
+
+async def _awaited(value):
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
 
 async def resolve_persona_prompt(context, event, config) -> str:
     persona_config = {}
@@ -12,12 +20,24 @@ async def resolve_persona_prompt(context, event, config) -> str:
     manager = getattr(context, "persona_manager", None)
     if manager is None:
         return ""
-    try:
-        persona = await manager.get_default_persona_v3(
-            umo=event.unified_msg_origin
-        )
-    except Exception:
-        return ""
+
+    persona = None
+    name = str(persona_config.get("name", "") or "").strip()
+    if name:
+        getter = getattr(manager, "get_persona_v3_by_id", None)
+        if callable(getter):
+            try:
+                persona = await _awaited(getter(name))
+            except Exception:
+                persona = None
+
+    if not persona:
+        try:
+            persona = await _awaited(
+                manager.get_default_persona_v3(umo=event.unified_msg_origin)
+            )
+        except Exception:
+            return ""
     if not persona:
         return ""
     return str(persona.get("prompt", "") or "")

@@ -3,11 +3,17 @@ import time
 import types
 import unittest
 
-from tests._helpers import install_astrbot_stub
+from tests._helpers import (
+    RequestLLMMixin,
+    _At,
+    _Plain,
+    install_astrbot_stub,
+)
 
 install_astrbot_stub()
 
 from dialoguesoul.plugin import DialoguesSoulPlugin
+from dialoguesoul.wake import WakeLimits
 
 
 def _base_config():
@@ -63,13 +69,13 @@ class BlockingRepo(FakeRepo):
         return []
 
 
-class FakeEvent:
+class FakeEvent(RequestLLMMixin):
     def __init__(self, text="hello", message_id="m1", components=None):
         self.unified_msg_origin = "p:group:1"
         self.message_obj = types.SimpleNamespace(
             message=list(components)
             if components is not None
-            else [types.SimpleNamespace(type="plain", text=text)],
+            else [_Plain(text=text)],
             message_id=message_id,
         )
         self.text = text
@@ -104,11 +110,6 @@ class FakeEvent:
     def get_extra(self, key, default=None):
         return self._extra.get(key, default)
 
-    def request_llm(self, **kwargs):
-        self.request = types.SimpleNamespace(**kwargs)
-        self.request.conversation = None
-        return self.request
-
 
 async def _collect(plugin, event):
     return [item async for item in plugin.handle_message(event)]
@@ -132,6 +133,23 @@ class PluginFlowTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(requests[0], event.request)
         self.assertEqual(event.get_extra("ds_request_kind"), "decision")
         self.assertTrue(event.call_llm)
+        self.assertIsNone(event.request.func_tool)
+        self.assertIn("tool_set", event.request_llm_kwargs)
+
+    async def test_successful_send_records_cooldown_for_next_candidate(self):
+        config = _base_config()
+        config["decision"]["cooldown_ms"] = 3000
+        plugin = self._plugin(config=config)
+        first = FakeEvent("first", "m1")
+        await _collect(plugin, first)
+        first._result = types.SimpleNamespace(chain=[_Plain(text="reply")])
+        await plugin.hooks.after_message_sent(first)
+
+        second = FakeEvent("second", "m2")
+        requests = await _collect(plugin, second)
+
+        self.assertEqual(requests, [])
+        self.assertIsNone(second.request)
 
     async def test_rules_without_trigger_produces_no_request(self):
         config = _base_config()
@@ -153,10 +171,7 @@ class PluginFlowTest(unittest.IsolatedAsyncioTestCase):
         direct_event = FakeEvent(
             "third",
             "m3",
-            components=[
-                types.SimpleNamespace(type="plain", text="third"),
-                types.SimpleNamespace(type="at", qq="bot"),
-            ],
+            components=[_Plain(text="third"), _At(qq="bot")],
         )
 
         first_task = asyncio.create_task(_collect(plugin, first_event))
@@ -223,6 +238,20 @@ class PluginFlowTest(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.assertEqual(plugin.wake.get(key).session_id, wake_meta["session_id"])
+
+    async def test_handle_message_clears_expired_wake_sessions(self):
+        config = _base_config()
+        config["wake"]["enabled"] = True
+        plugin = self._plugin(config=config)
+        key = ("p", "bot", "group", "1")
+        limits = WakeLimits(1, 5, 120)
+        plugin.wake.reserve(key, limits, "s1", now=0)
+        plugin.wake.record_delivery(key, limits, "s1", starts_session=True, now=0)
+        self.assertIn(key, plugin.wake._sessions)
+
+        await _collect(plugin, FakeEvent())
+
+        self.assertNotIn(key, plugin.wake._sessions)
 
     async def test_prune_idle_removes_unlocked_chat_lock(self):
         plugin = self._plugin()

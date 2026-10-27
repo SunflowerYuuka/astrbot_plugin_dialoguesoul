@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Protocol, runtime_checkable
 
-from dialoguesoul.models import ChatMessage
+from ..models import ChatMessage
 
 from .db import Database
 

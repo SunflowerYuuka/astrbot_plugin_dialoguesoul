@@ -2,7 +2,7 @@ import itertools
 import types
 import unittest
 
-from tests._helpers import install_astrbot_stub
+from tests._helpers import _At, install_astrbot_stub
 
 install_astrbot_stub()
 
@@ -165,7 +165,7 @@ class StrategyTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_direct_address_is_normal(self):
         engine = StrategyEngine(Gate(), WakeManager())
-        event = E("hi", components=[types.SimpleNamespace(type="at", qq="bot")])
+        event = E("hi", components=[_At(qq="bot")])
         self.assertEqual((await engine.route(event, config("rules"))).kind, "normal")
 
     async def test_prune_removes_idle_state(self):
