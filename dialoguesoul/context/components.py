@@ -25,14 +25,20 @@ def component_to_dict(component) -> dict:
     return data
 
 
+def _as_dict(component) -> dict:
+    return component if isinstance(component, dict) else component_to_dict(component)
+
+
 def collect_text(components) -> str:
-    return "".join(str(c.get("text", "")) for c in components if c.get("type") == "plain")
+    return "".join(
+        str(c.get("text", "")) for c in map(_as_dict, components) if c.get("type") == "plain"
+    )
 
 
 def collect_image_urls(components) -> list[str]:
     urls: list[str] = []
     seen: set[str] = set()
-    for component in components:
+    for component in map(_as_dict, components):
         if component.get("type") != "image":
             continue
         for name in _IMAGE_SOURCE_FIELDS:
@@ -47,4 +53,8 @@ def collect_image_urls(components) -> list[str]:
 
 
 def collect_forward_ids(components) -> list[str]:
-    return [str(c.get("id")) for c in components if c.get("type") == "forward" and c.get("id")]
+    return [
+        str(c.get("id"))
+        for c in map(_as_dict, components)
+        if c.get("type") == "forward" and c.get("id")
+    ]
