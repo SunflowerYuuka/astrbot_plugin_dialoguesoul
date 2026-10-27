@@ -31,13 +31,16 @@ v1 不做：
 
 1. **完全走 AstrBot 管线**：插件只构造 `ProviderRequest` 并 `yield`，由 AstrBot 完成知识库、钩子、生成和发送。
 2. **发送使用 AstrBot 原生能力**：流式、分段、引用、发送后钩子由 AstrBot 负责；发送队列后续作为可选模块。
-3. **规则触发 + LLM 决策**：规则门控决定是否请求模型；模型决定是否回复以及回复内容。
-4. **通用兼容**：不识别具体插件，不调用第三方插件内部 API；只依赖 `on_llm_request` / `on_llm_response` 这类通用钩子。
-5. **不绑定 AstrBot 会话**：请求中不设置 `req.conversation`，避免 AstrBot 覆盖人格和自动挂载工具，保证 JSON 决策协议稳定。
+3. **规则触发 + LLM 决策**：触发策略可配置；模型决定是否回复以及回复内容。
+4. **四种触发策略可配置**：`every_message`、`rules`、`window`、`interest`，默认 `window`（30 秒窗口采样）。
+5. **两种决策格式可配置**：`marker`（自然文本 + `<NO_RESPONSE>`，默认）与 `json`（结构化，多消息/置信度/引用）。
+6. **通用兼容**：不识别具体插件，不调用第三方插件内部 API；只依赖 `on_llm_request` / `on_llm_response` 这类通用钩子。
+5. **不绑定 AstrBot 会话**：请求中不设置 `req.conversation`，避免 AstrBot 覆盖人格和自动挂载工具，保证决策协议稳定。
 6. **最近历史用 SQLite**：通过 `HistoryRepository` 隔离，支持索引、事务、保留清理和多账号查询。
 7. **自动导入一次**：首次启动且数据库为空时，尝试导入 SpectreCore 的 JSON 历史，成功后写入标记，避免重复导入。
 8. **指令前缀 `/ds`**。
 9. **AGPL-3.0 + 独立重写**：不复制 SpectreCore 源码，只参考其公开行为、配置语义和使用体验；所有模块、测试与文档按本 spec 重新实现。项目采用 AGPL-3.0，与 AstrBot 的许可保持一致。
+10. **用户消息先入库**：所有非自身用户消息在路由前写入 SQLite，保证窗口/兴趣策略能读到完整对话。
 
 ## 4. AstrBot 集成事实
 
@@ -82,51 +85,70 @@ v1 不做：
 
 ## 6. 消息流程
 
-### 6.1 直接 @ / 回复机器人
+### 6.1 公共前置
 
-1. Gate 识别直接地址，绕过冷却与每分钟上限。
-2. ContextBuilder 组装增强上下文。
-3. 设置 `event.call_llm = True`，标记本插件接管本次 LLM。
-4. 发送普通请求，不要求 JSON。
-5. AstrBot 生成并发送。
-6. `after_message_sent` 保存机器人消息。
+1. 基础过滤：自身消息、空消息、聊天未启用、临时静音、忽略前缀、黑名单关键词。
+2. 通过基础过滤的非自身消息写入 SQLite 最近历史。
+3. 每群同时只处理一个决策：
+   - 已有决策在跑时，非 @ 消息只入库，跳过候选
+   - 直接 @ / 回复机器人等待当前决策结束后再处理
+4. 直接 @ / 回复机器人始终走普通请求，绕过冷却与每分钟上限。
+5. 唤醒会话活跃时，通过硬门控后立即进入决策，不受触发策略的窗口/兴趣限制。
 
-### 6.2 概率 / 关键词 / 唤醒触发
+### 6.2 触发策略
 
-1. Gate 判定候选。
-2. ContextBuilder 组装增强上下文，并追加 JSON 决策协议。
-3. 设置 `event.call_llm = True` 与 `ds_request_kind=decision`，禁止流式，设置 `req.func_tool` 为空 `ToolSet()`。
-4. 发送决策请求。
-5. AstrBot 注入知识库与第三方记忆后生成。
-6. `on_llm_response` 解析 JSON：
-   - `reply`：把 `resp.completion_text` 改写为真实回复文本，供其他插件记录
-   - `ignore` / 解析失败 / 置信度不足：置空
-7. `on_decorating_result`：
-   - `reply`：用解析出的消息重建消息链
-   - `ignore`：清空结果，不发送
-8. `after_message_sent`：保存机器人消息；若发送成功，更新唤醒会话。
+- `every_message`：基础过滤通过后，每条消息都进入决策。
+- `rules`：关键词、概率、提问等规则命中后进入决策。
+- `window`（默认）：每条消息到达时，若距上次判断不足 `window_seconds` 则跳过；否则用最近历史进入决策。
+- `interest`：基础过滤通过后，先用轻量判断输出 `YES` / `NO`；`YES` 才进入决策。
 
-### 6.3 不触发
+### 6.3 决策请求与发送
+
+1. ContextBuilder 组装增强上下文；按 `decision.format` 追加 `marker` 或 `json` 协议。
+2. 设置 `event.call_llm = True` 与 `ds_request_kind=decision`，禁止流式，`req.func_tool` 为空。
+3. 发送决策请求。
+4. AstrBot 注入知识库与第三方记忆后生成。
+5. `on_llm_response` 按格式解析：
+   - `marker`：文本含 `<NO_RESPONSE>` 或为空 → ignore；否则保留自然文本
+   - `json`：`reply` 改写为真实文本；`ignore` / 解析失败 / 置信度不足 → 置空
+6. `on_decorating_result`：
+   - `marker`：ignore 时清空结果；reply 时保留原消息链
+   - `json`：reply 时用解析出的消息重建消息链，并按 `quote` 插入引用；ignore 时清空结果
+7. `after_message_sent`：保存机器人消息；若发送成功，更新唤醒会话。
+
+### 6.4 不触发
 
 不构造请求，不设置 `call_llm`，由 AstrBot 保持默认行为。
 
-### 6.4 事件标记
-
-为避免误处理其他插件或默认管线的结果，使用事件附加标记：
+### 6.5 事件标记
 
 - `ds_request_kind`：`normal` 或 `decision`
 - `ds_decision`：解析后的决策对象（仅 decision）
+- `ds_decision_format`：`marker` 或 `json`
 - `ds_wake`：本次请求对应的唤醒会话元数据（会话 ID、限制、是否启动）
 
 `on_llm_response` 和 `on_decorating_result` 只处理 `ds_request_kind == "decision"` 的事件；`after_message_sent` 读取 `ds_request_kind` 与 `ds_wake` 更新历史与唤醒状态。
 
 ## 7. 决策协议
 
+由 `decision.format` 选择。
+
+### 7.1 marker（默认）
+
+模型正常输出自然语言；不想接话时输出 `<NO_RESPONSE>`。
+
+- 文本为空或包含 `<NO_RESPONSE>` → ignore
+- 其他文本 → reply，作为单条消息发送
+- 不支持多消息、置信度、自主引用；引用交给 AstrBot 原生设置
+
+### 7.2 json
+
 请求提示词要求模型只输出：
 
 ```json
 {"action":"ignore|reply","reason":"最多30字","quote":3,"messages":["..."],"confidence":0.0}
 ```
+
 `quote` 可选，为历史消息编号；省略表示不引用。
 
 解析规则：
@@ -138,7 +160,13 @@ v1 不做：
 - `reply` 但消息为空或置信度低于阈值 → 视为 `ignore`
 - 任何解析异常 → `ignore`
 
-直接 @ 不使用该协议。
+直接 @ 不使用决策协议。
+
+### 7.3 唤醒计数
+
+- `wake.max_replies` 统计实际发送成功的唤醒接话次数
+- 模型 ignore、决策失败、发送失败都不消耗次数
+- 总时长和空闲超时仍然照常生效
 
 ## 8. 触发与门控
 
@@ -154,21 +182,36 @@ v1 不做：
 8. 黑名单关键词
 9. 冷却与每分钟上限（直接 @ 绕过）
 
-候选触发：
+触发策略（`trigger.strategy`）：
 
-- 直接 @ / 回复机器人：优先级 2
-- 关键词：优先级 1
-- 机器人参与后的提问：优先级 1
-- 概率：优先级 0
-- 唤醒会话活跃：跳过普通触发，直接进入决策
+| 策略 | 行为 |
+|---|---|
+| `every_message` | 硬门控通过后，每条消息进入决策 |
+| `rules` | 关键词/概率/提问/@ 等规则命中后进入决策 |
+| `window` | 距上次判断超过 `window_seconds` 才进入决策，使用最近历史 |
+| `interest` | 先由轻量判断输出 `YES`/`NO`，`YES` 才进入决策 |
+
+- 直接 @ / 回复机器人：始终普通请求，优先级最高
+- 唤醒会话活跃：通过硬门控后立即决策，不受窗口/兴趣限制
+- 冷却与每分钟上限：直接 @ 绕过，其余候选遵守
+
+### 8.1 突发模式（可选）
+
+- `trigger.burst.enabled` 默认关闭
+- `trigger.burst.groups` 配置固定群号，只对这些群生效
+- 最近 `window_seconds` 内消息数超过 `threshold` 时进入突发模式
+- 突发模式下暂停自主采样，只响应直接 @ / 回复机器人
+- 安静 `cooldown_seconds` 后退出突发模式
 
 ## 9. 唤醒会话
 
 - 激活条件：决策请求发送成功且历史保存成功
 - 状态键：`platform:self_id:chat_type:chat_id`
-- 限制：总时长、最大消息数、空闲超时；`0` 表示不限
+- 限制：总时长、最大成功接话次数 `max_replies`、空闲超时；`0` 表示不限
 - 配置作用域：机器人管理员 > 群/私聊 > 全局
-- 每次成功发送刷新 `last_activity_at`，不重置已消费消息数
+- 只有实际发送成功才增加 `consumed_replies`；ignore/失败不消耗
+- 首次触发在请求时预留 `session_id`，发送成功才创建会话；旧预留不得重开新会话
+- 每次成功发送刷新 `last_activity_at`，不重置已消费次数
 - 达到限制后结束；旧会话的延迟发送不得重开新会话
 - 状态为实例内存，重启清零
 
@@ -233,10 +276,16 @@ CREATE TABLE meta (
 顶层配置：
 
 - `enabled`、`enable_all_groups`、`enabled_groups`、`blocked_groups`、`enabled_private`
+- `trigger.strategy`（`every_message` / `rules` / `window` / `interest`，默认 `window`）
+- `trigger.window_seconds`（默认 30）
+- `trigger.interest.provider_id`（轻量判断使用的 provider，留空用当前）
+- `trigger.burst.enabled`（默认关闭）、`trigger.burst.groups`（固定群号）、`trigger.burst.threshold`、`trigger.burst.cooldown_seconds`
 - `trigger.probability`、`trigger.keywords`、`trigger.blacklist_keywords`、`trigger.ignored_prefixes`
+- `decision.format`（`marker` / `json`，默认 `marker`）
 - `decision.max_reply_messages`、`decision.min_confidence`、`decision.timeout_ms`、`decision.max_context_messages`、`decision.cooldown_ms`、`decision.max_replies_per_minute`
-- `wake.enabled`、`wake.duration_seconds`、`wake.max_messages`、`wake.idle_timeout_seconds`、`wake.private`、`wake.admin`、`wake.groups`
+- `wake.enabled`、`wake.duration_seconds`、`wake.max_replies`、`wake.idle_timeout_seconds`、`wake.private`、`wake.admin`、`wake.groups`
 - `context.history_limit`、`context.image_caption.*`、`context.forward.*`
+- `context.summary.enabled`（默认关闭）、`context.summary.provider_id`、`context.summary.threshold`
 - `persona`、`extra_prompt`
 - `storage.retention_days`、`storage.retention_count`
 
@@ -265,10 +314,12 @@ CREATE TABLE meta (
 
 单元测试：
 
-- 门控顺序、@ 优先、冷却绕过
-- 决策解析、置信度、消息截断、异常输入
-- 响应改写：reply 保留文本、ignore 置空
-- 唤醒状态：激活、刷新、过期、消息上限、旧会话不重开
+- 门控顺序、@ 优先、冷却绕过、每群单决策
+- 四种触发策略：every_message、rules、window、interest
+- 突发模式：固定群、阈值进入、安静退出
+- 决策解析：marker 与 json、置信度、消息截断、异常输入
+- 响应改写：marker 自然文本、json reply 保留、ignore 置空
+- 唤醒状态：成功接话计数、ignore 不消耗、过期、旧会话不重开
 - SQLite 仓储：追加、读取、清空、保留清理、并发
 - 旧 JSON 导入：成功、重复导入跳过、损坏文件跳过
 - 配置默认值与迁移
@@ -336,9 +387,13 @@ astrbot_plugin_dialoguesoul/
 3. 第三方 `on_llm_response` 插件记录的是真实回复，不是 JSON。
 4. 直接 @ 走普通请求，能正常回复。
 5. 决策为 ignore 时不发送任何消息。
-6. 唤醒会话按配置过期，旧会话不会因延迟发送重开。
+6. 唤醒会话按成功接话次数结束，ignore 不消耗次数，旧会话不会因延迟发送重开。
 7. SQLite 历史读写、清理、旧 JSON 自动导入可用。
-8. 全量测试通过，不依赖真实模型。
+8. 四种触发策略与两种决策格式可切换。
+9. 每群同时只跑一个决策，非 @ 跳过，@ 等待。
+10. 突发模式可对固定群开启，并能在安静后退出。
+11. 可选模型摘要只在开启时调用。
+12. 全量测试通过，不依赖真实模型。
 
 ## 20. 鸣谢
 
