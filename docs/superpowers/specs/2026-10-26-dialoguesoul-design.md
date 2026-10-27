@@ -125,14 +125,16 @@ v1 不做：
 请求提示词要求模型只输出：
 
 ```json
-{"action":"ignore|reply","reason":"最多30字","messages":["..."],"confidence":0.0}
+{"action":"ignore|reply","reason":"最多30字","quote":3,"messages":["..."],"confidence":0.0}
 ```
+`quote` 可选，为历史消息编号；省略表示不引用。
 
 解析规则：
 
 - `action` 仅允许 `ignore` / `reply`
 - `messages` 必须是字符串列表，过滤空串，截断到配置上限
 - `confidence` 必须在 0–1
+- `quote` 可选，必须是正整数且对应本次请求中的历史消息编号；无效时忽略
 - `reply` 但消息为空或置信度低于阈值 → 视为 `ignore`
 - 任何解析异常 → `ignore`
 
@@ -175,7 +177,7 @@ v1 不做：
 - 最近历史：按配置条数从 SQLite 读取
 - 图片：筛选相关上下文图片，先转述，再连同原图传给模型
 - 合并转发：按需展开，限制层数、条数、字符数、超时
-- 引用：默认引用与模型自主引用
+- 引用：默认引用由 AstrBot 原生处理；模型自主引用通过决策 JSON 的 `quote` 编号实现
 - 人格：插件自行读取 AstrBot 人格并注入 system prompt
 - 附加提示词：仅本次请求生效
 - 环境描述：bot id、昵称、群名、私聊对象
