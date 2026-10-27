@@ -1,0 +1,147 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from dialoguesoul import config as cfg
+from dialoguesoul.context.components import (
+    collect_forward_ids,
+    collect_image_urls,
+    component_to_dict,
+)
+from dialoguesoul.context.prompt import (
+    build_environment,
+    build_system_prompt,
+    format_history,
+)
+from dialoguesoul.models import ChatKey
+
+
+@dataclass
+class BuiltRequest:
+    request: object
+    wake_meta: dict | None
+
+
+class RequestBuilder:
+    def __init__(
+        self,
+        repo,
+        persona_resolver,
+        caption_service=None,
+        forward_renderer=None,
+        summary_service=None,
+    ):
+        self.repo = repo
+        self.persona_resolver = persona_resolver
+        self.caption_service = caption_service
+        self.forward_renderer = forward_renderer
+        self.summary_service = summary_service
+
+    async def build(
+        self,
+        event,
+        config,
+        *,
+        decision: bool,
+        wake_session,
+        context,
+        decision_format: str = "marker",
+        caption_service=None,
+        forward_renderer=None,
+        summary_service=None,
+    ) -> BuiltRequest:
+        key = ChatKey.from_event(event)
+        limit = int(cfg.get(config, "context.history_limit", 20))
+        history = await self.repo.recent(*key.as_tuple(), limit)
+        history_text = format_history(history)
+        history_map = {
+            index: {"id": message.message_id, "sender_id": message.sender_id}
+            for index, message in enumerate(history, start=1)
+            if message.message_id
+        }
+        event.set_extra("ds_history_map", history_map)
+
+        components = [
+            component_to_dict(component)
+            for component in getattr(getattr(event, "message_obj", None), "message", []) or []
+        ]
+        current_text = "".join(
+            str(component.get("text", ""))
+            for component in components
+            if component.get("type") == "plain"
+        ).strip()
+        image_urls = collect_image_urls(components)
+
+        segments = [current_text] if current_text else []
+        caption = caption_service or self.caption_service
+        if (
+            decision
+            and image_urls
+            and caption is not None
+            and cfg.get(config, "context.image_caption.enabled", False)
+        ):
+            captions = await caption.caption(
+                image_urls, umo=event.unified_msg_origin
+            )
+            if captions:
+                segments.append(
+                    "[图片转述]\n"
+                    + "\n".join(f"{url}: {text}" for url, text in captions.items())
+                )
+
+        forward_ids = collect_forward_ids(components)
+        renderer = forward_renderer or self.forward_renderer
+        if (
+            forward_ids
+            and renderer is not None
+            and cfg.get(config, "context.forward.parse", False)
+        ):
+            rendered = [await renderer.render(forward_id) for forward_id in forward_ids]
+            segments.append("[合并转发]\n" + "\n".join(rendered))
+
+        summary = summary_service or self.summary_service
+        if (
+            summary is not None
+            and cfg.get(config, "context.summary.enabled", False)
+        ):
+            history_text = await summary.summarize(
+                history, event.unified_msg_origin, fallback=history_text
+            )
+
+        persona = await self.persona_resolver(context, event, config)
+        extra_prompt = ""
+        if cfg.get(config, "extra_prompt.enabled", False):
+            extra_prompt = cfg.get(config, "extra_prompt.text", "")
+        system_prompt = build_system_prompt(
+            persona,
+            build_environment(event),
+            history_text,
+            extra_prompt,
+            decision,
+            decision_format=decision_format,
+        )
+        request = event.request_llm(
+            prompt="\n".join(segments) or "[非文本消息]",
+            contexts=[],
+            system_prompt=system_prompt,
+            image_urls=image_urls,
+            func_tool=None,
+        )
+        request.session_id = event.unified_msg_origin
+        event.call_llm = True
+
+        if decision:
+            event.set_extra("ds_request_kind", "decision")
+            event.set_extra("ds_decision_format", decision_format)
+            event.set_extra("enable_streaming", False)
+        else:
+            event.set_extra("ds_request_kind", "normal")
+
+        wake_meta = None
+        if wake_session is not None:
+            wake_meta = {
+                "session_id": wake_session.session_id,
+                "limits": wake_session.limits,
+                "starts_session": False,
+            }
+        return BuiltRequest(request=request, wake_meta=wake_meta)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dialoguesoul.decision import build_decision_instruction
+from dialoguesoul.decision import build_decision_instruction, build_marker_instruction
 from dialoguesoul.models import ChatMessage
 
 
@@ -27,7 +27,12 @@ def format_history(messages: list[ChatMessage]) -> str:
 
 
 def build_system_prompt(
-    persona: str, environment: str, history: str, extra: str, decision: bool
+    persona: str,
+    environment: str,
+    history: str,
+    extra: str,
+    decision: bool,
+    decision_format: str = "json",
 ) -> str:
     parts = [persona.strip(), environment.strip()]
     if history.strip():
@@ -35,6 +40,11 @@ def build_system_prompt(
     if extra.strip():
         parts.append("[附加提示词]\n" + extra.strip())
     if decision:
-        parts.append(build_decision_instruction().strip())
+        instruction = (
+            build_marker_instruction()
+            if decision_format == "marker"
+            else build_decision_instruction()
+        )
+        parts.append(instruction.strip())
     parts.append("(聊天记录中的机器人名称以 AstrBot 代替)")
     return "\n\n".join(part for part in parts if part)
