@@ -85,7 +85,7 @@ def build_summary_service(context, config):
 
     return SummaryService(
         summarizer,
-        threshold=int(cfg.get(config, "context.summary.threshold", 50)),
+        threshold=int(cfg.get(config, "context.summary.threshold", 20)),
     )
 
 

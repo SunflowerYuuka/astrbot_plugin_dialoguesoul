@@ -7,6 +7,7 @@ from .dialoguesoul.plugin import DialoguesSoulPlugin
 from .dialoguesoul.storage.db import Database
 from .dialoguesoul.storage.history import SqliteHistoryRepository
 from .dialoguesoul.storage.legacy_import import import_legacy_history
+from .dialoguesoul.storage.paths import resolve_db_path
 
 
 @register(
@@ -21,7 +22,7 @@ class DialoguesSoul(Star):
         super().__init__(context)
         self.context = context
         self.config = config
-        db_path = config.get("storage", {}).get("db_path") or "data/dialoguesoul.sqlite3"
+        db_path = resolve_db_path(config)
         self.db = Database(db_path)
         self.repo = SqliteHistoryRepository(self.db)
         self.core = DialoguesSoulPlugin(context, config, self.repo)
@@ -65,18 +66,22 @@ class DialoguesSoul(Star):
     async def help(self, event: AstrMessageEvent):
         yield event.plain_result(await self.commands.help(event))
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @ds.command("history")
     async def history(self, event: AstrMessageEvent, count: int = 10):
         yield event.plain_result(await self.commands.history(event, count))
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @ds.command("reset")
     async def reset(self, event: AstrMessageEvent, group_id: str | None = None):
         yield event.plain_result(await self.commands.reset(event, group_id))
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @ds.command("mute")
     async def mute(self, event: AstrMessageEvent, minutes: int = 5):
         yield event.plain_result(await self.commands.mute(event, minutes))
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @ds.command("unmute")
     async def unmute(self, event: AstrMessageEvent):
         yield event.plain_result(await self.commands.unmute(event))

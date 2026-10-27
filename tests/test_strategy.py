@@ -126,10 +126,27 @@ class StrategyTest(unittest.IsolatedAsyncioTestCase):
                 },
             },
         )
-        await engine.route(E("a"), data)
-        await engine.route(E("b"), data)
+        self.assertEqual((await engine.route(E("a"), data)).kind, "decision")
+        self.assertEqual((await engine.route(E("b"), data)).kind, "ignore")
         self.assertEqual((await engine.route(E("c"), data)).kind, "ignore")
         self.assertEqual((await engine.route(E("d", group="2"), data)).kind, "decision")
+
+    async def test_burst_empty_groups_disables_burst(self):
+        engine = StrategyEngine(Gate(), WakeManager())
+        data = config(
+            "every_message",
+            trigger={
+                "strategy": "every_message",
+                "burst": {
+                    "enabled": True,
+                    "groups": [],
+                    "threshold": 1,
+                    "cooldown_seconds": 30,
+                },
+            },
+        )
+        self.assertEqual((await engine.route(E("a"), data)).kind, "decision")
+        self.assertEqual((await engine.route(E("b"), data)).kind, "decision")
 
     async def test_wake_session_bypasses_strategy(self):
         wake = WakeManager()
@@ -150,6 +167,19 @@ class StrategyTest(unittest.IsolatedAsyncioTestCase):
         engine = StrategyEngine(Gate(), WakeManager())
         event = E("hi", components=[types.SimpleNamespace(type="at", qq="bot")])
         self.assertEqual((await engine.route(event, config("rules"))).kind, "normal")
+
+    async def test_prune_removes_idle_state(self):
+        engine = StrategyEngine(Gate(), WakeManager())
+        await engine.route(E("普通"), config("window"), now=1000)
+        key = ("p", "bot", "group", "1")
+        self.assertIn(key, engine._last_considered)
+        self.assertIn(key, engine.burst._times)
+
+        engine.prune(now=1000 + 3600, ttl=3600)
+
+        self.assertEqual(engine._last_considered, {})
+        self.assertEqual(engine.burst._times, {})
+        self.assertEqual(engine.burst._burst_until, {})
 
 
 if __name__ == "__main__":

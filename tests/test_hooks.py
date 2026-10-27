@@ -342,6 +342,49 @@ class HooksTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(repo.messages, [])
         self.assertEqual(wake.deliveries, [])
 
+    async def test_non_first_wake_delivery_increments_existing_session(self):
+        repo = _Repo()
+        wake = WakeManager()
+        limits = WakeLimits(300, 3, 120)
+        key = ("p", "bot", "group", "1")
+        wake.reserve(key, limits, "s1")
+        wake.record_delivery(key, limits, "s1", starts_session=True)
+        event = _Event(
+            {
+                "ds_request_kind": "decision",
+                "ds_wake": {"session_id": "s1", "limits": limits, "starts_session": False},
+            },
+            result=types.SimpleNamespace(chain=[{"type": "plain", "text": "hi"}]),
+        )
+
+        await Hooks(repo=repo, wake=wake, config={}).after_message_sent(event)
+
+        self.assertEqual(wake.get(key).consumed_replies, 2)
+        self.assertEqual(len(repo.messages), 1)
+
+    async def test_ignore_does_not_consume_existing_wake_reply(self):
+        repo = _Repo()
+        wake = WakeManager()
+        limits = WakeLimits(300, 3, 120)
+        key = ("p", "bot", "group", "1")
+        wake.reserve(key, limits, "s1")
+        wake.record_delivery(key, limits, "s1", starts_session=True)
+        event = _Event(
+            {
+                "ds_request_kind": "decision",
+                "ds_decision": parse_marker(NO_RESPONSE),
+                "ds_wake": {"session_id": "s1", "limits": limits, "starts_session": False},
+            },
+            result=types.SimpleNamespace(chain=[{"type": "plain", "text": "raw"}]),
+        )
+        hooks = Hooks(repo=repo, wake=wake, config={})
+
+        await hooks.on_decorating_result(event)
+        await hooks.after_message_sent(event)
+
+        self.assertEqual(wake.get(key).consumed_replies, 1)
+        self.assertEqual(repo.messages, [])
+
     async def test_retention_prunes_by_days_and_count(self):
         repo = _Repo()
         event = _Event(

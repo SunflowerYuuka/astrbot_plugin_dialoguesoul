@@ -285,7 +285,7 @@ CREATE TABLE meta (
 - `decision.max_reply_messages`、`decision.min_confidence`、`decision.timeout_ms`、`decision.max_context_messages`、`decision.cooldown_ms`、`decision.max_replies_per_minute`
 - `wake.enabled`、`wake.duration_seconds`、`wake.max_replies`、`wake.idle_timeout_seconds`、`wake.private`、`wake.admin`、`wake.groups`
 - `context.history_limit`、`context.image_caption.*`、`context.forward.*`
-- `context.summary.enabled`（默认关闭）、`context.summary.provider_id`、`context.summary.threshold`
+- `context.summary.enabled`（默认关闭）、`context.summary.provider_id`、`context.summary.threshold`（默认 20）
 - `persona`、`extra_prompt`
 - `storage.retention_days`、`storage.retention_count`
 

@@ -42,6 +42,22 @@ class BurstGate:
             return True
         return self._burst_until.get(key, 0) > now
 
+    def prune(self, now=None, ttl=3600):
+        now = time.time() if now is None else now
+        removed = 0
+        for key, times in list(self._times.items()):
+            kept = [t for t in times if now - t < 60]
+            if not kept or now - max(kept) >= ttl:
+                self._times.pop(key, None)
+                removed += 1
+            else:
+                self._times[key] = kept
+        for key, until in list(self._burst_until.items()):
+            if until <= now:
+                self._burst_until.pop(key, None)
+                removed += 1
+        return removed
+
 
 class StrategyEngine:
     def __init__(self, gate, wake, interest_judge=None):
@@ -54,6 +70,7 @@ class StrategyEngine:
     async def route(self, event, config, history_text="", now=None):
         now = time.time() if now is None else now
         key = ChatKey.from_event(event).as_tuple()
+        self.burst.record(key, now)
         direct = self.gate.is_direct_address(event)
 
         session = None
@@ -73,7 +90,6 @@ class StrategyEngine:
 
         if self.burst.is_bursting(key, config, now):
             return RouteDecision("ignore")
-        self.burst.record(key, now)
 
         strategy = cfg.get(config, "trigger.strategy", "window")
         if strategy == "rules":
@@ -99,3 +115,12 @@ class StrategyEngine:
         if strategy == "window":
             self._last_considered[key] = now
         return RouteDecision("decision", GateResult("candidate", strategy, strategy, 1))
+
+    def prune(self, now=None, ttl=3600):
+        now = time.time() if now is None else now
+        removed = 0
+        for key, last in list(self._last_considered.items()):
+            if now - last >= ttl:
+                self._last_considered.pop(key, None)
+                removed += 1
+        return removed + self.burst.prune(now, ttl)

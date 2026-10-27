@@ -1,5 +1,41 @@
+import importlib.util
 import sys
 import types
+from pathlib import Path
+
+
+class _Star:
+    def __init__(self, context=None, config=None):
+        self.context = context
+        self.config = config
+
+
+def _make_decorator(name):
+    def decorator(*args, **kwargs):
+        def wrap(func):
+            setattr(func, f"__{name}__", (args, kwargs))
+            return func
+
+        return wrap
+
+    return decorator
+
+
+def _register(*args, **kwargs):
+    def wrap(cls):
+        cls.__register__ = (args, kwargs)
+        return cls
+
+    return wrap
+
+
+def _command_group(*args, **kwargs):
+    def wrap(func):
+        setattr(func, "__command_group__", (args, kwargs))
+        func.command = _make_decorator("command")
+        return func
+
+    return wrap
 
 
 class _Plain:
@@ -44,10 +80,15 @@ def install_astrbot_stub():
     all_mod.At = _At
     all_mod.Reply = _Reply
     all_mod.MessageChain = _MessageChain
-    all_mod.Star = type("Star", (), {})
+    all_mod.Star = _Star
     all_mod.Context = object
     all_mod.AstrBotConfig = dict
     all_mod.AstrMessageEvent = object
+    all_mod.register = _register
+    all_mod.EventMessageType = types.SimpleNamespace(
+        GROUP_MESSAGE="group", PRIVATE_MESSAGE="private"
+    )
+    all_mod.event_message_type = _make_decorator("event_message_type")
     all_mod.logger = types.SimpleNamespace(
         debug=lambda *a, **k: None,
         info=lambda *a, **k: None,
@@ -57,17 +98,14 @@ def install_astrbot_stub():
 
     event_mod = sys.modules.setdefault("astrbot.api.event", types.ModuleType("astrbot.api.event"))
     event_mod.__path__ = []
+    event_mod.EventMessageType = all_mod.EventMessageType
     filter_mod = sys.modules.setdefault("astrbot.api.event.filter", types.ModuleType("astrbot.api.event.filter"))
-    def decorator(*args, **kwargs):
-        def wrap(func):
-            return func
-        return wrap
     for name in (
         "event_message_type", "on_llm_response", "on_decorating_result",
-        "after_message_sent", "command_group", "command", "permission_type",
-        "custom_filter",
+        "after_message_sent", "command", "permission_type", "custom_filter",
     ):
-        setattr(filter_mod, name, decorator)
+        setattr(filter_mod, name, _make_decorator(name))
+    filter_mod.command_group = _command_group
     filter_mod.PermissionType = types.SimpleNamespace(ADMIN="admin")
 
     provider_mod = sys.modules.setdefault("astrbot.api.provider", types.ModuleType("astrbot.api.provider"))
@@ -88,3 +126,24 @@ def install_astrbot_stub():
     components.Plain = _Plain
     components.At = _At
     components.Reply = _Reply
+
+
+def load_plugin_main():
+    root = Path(__file__).resolve().parents[1]
+    package_name = "_dialoguesoul_plugin_under_test"
+    package = sys.modules.get(package_name)
+    if package is None:
+        package = types.ModuleType(package_name)
+        package.__path__ = [str(root)]
+        sys.modules[package_name] = package
+
+    module_name = f"{package_name}.main"
+    existing = sys.modules.get(module_name)
+    if existing is not None:
+        return existing
+
+    spec = importlib.util.spec_from_file_location(module_name, root / "main.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module

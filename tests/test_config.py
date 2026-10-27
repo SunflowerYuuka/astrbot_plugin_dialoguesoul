@@ -43,7 +43,7 @@ class ConfigTest(unittest.TestCase):
         self.assertNotIn("max_messages", cfg.DEFAULTS["wake"])
         self.assertFalse(cfg.get(cfg.DEFAULTS, "context.summary.enabled"))
         self.assertEqual(cfg.get(cfg.DEFAULTS, "context.summary.provider_id"), "")
-        self.assertEqual(cfg.get(cfg.DEFAULTS, "context.summary.threshold"), 50)
+        self.assertEqual(cfg.get(cfg.DEFAULTS, "context.summary.threshold"), 20)
 
     def test_schema_is_loadable_by_astrbot_parser(self):
         schema = json.loads((ROOT / "_conf_schema.json").read_text("utf-8"))
@@ -115,6 +115,10 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(decision["format"]["options"], ["marker", "json"])
         self.assertEqual(decision["format"]["default"], "marker")
         self.assertEqual(schema["wake"]["items"]["groups"]["type"], "template_list")
+        burst_groups = trigger["burst"]["items"]["groups"]
+        self.assertEqual(burst_groups["default"], [])
+        self.assertNotIn("所有群", burst_groups["hint"])
+        self.assertIn("留空", burst_groups["hint"])
 
 
 DEFAULT_VALUE_MAP = {

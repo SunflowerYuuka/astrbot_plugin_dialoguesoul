@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 
 from dialoguesoul import config as cfg
@@ -42,9 +43,24 @@ class DialoguesSoulPlugin:
         )
         self.summary_service = build_summary_service(context, config)
         self._locks = {}
+        self._lock_seen = {}
 
     async def close(self):
         return None
+
+    def prune_idle(self, now=None, ttl=3600):
+        now = time.time() if now is None else now
+        self.strategy.prune(now, ttl)
+        removed = 0
+        for key, seen in list(self._lock_seen.items()):
+            lock = self._locks.get(key)
+            if lock is None:
+                self._lock_seen.pop(key, None)
+            elif not lock.locked() and now - seen >= ttl:
+                self._locks.pop(key, None)
+                self._lock_seen.pop(key, None)
+                removed += 1
+        return removed
 
     async def handle_message(self, event):
         key = ChatKey.from_event(event).as_tuple()
@@ -53,11 +69,16 @@ class DialoguesSoulPlugin:
         ):
             await self.repo.append(user_message_from_event(event))
 
-        lock = self._locks.setdefault(key, asyncio.Lock())
+        self.prune_idle()
+        lock = self._locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[key] = lock
         direct = self.gate.is_direct_address(event)
         if lock.locked() and not direct:
             return
         async with lock:
+            self._lock_seen[key] = time.time()
             limit = int(cfg.get(self.config, "context.history_limit", 20))
             history = await self.repo.recent(*key, limit)
             history_text = format_history(history)

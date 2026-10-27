@@ -55,7 +55,7 @@ DEFAULTS: dict[str, Any] = {
         "summary": {
             "enabled": False,
             "provider_id": "",
-            "threshold": 50,
+            "threshold": 20,
         },
         "image_caption": {
             "enabled": False,
@@ -85,6 +85,28 @@ def get(config: Any, path: str, default=None):
             return default
         current = current[part]
     return current
+
+
+def chat_key_id(key) -> str:
+    return "|".join(str(part) for part in key.as_tuple())
+
+
+def _until(value) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def mute_until(config, key) -> float:
+    mute = config.get("_temp_mute", {}) or {}
+    if not isinstance(mute, dict):
+        return 0.0
+    until = _until(mute.get("until", 0))
+    entry = mute.get(chat_key_id(key))
+    if isinstance(entry, dict):
+        until = max(until, _until(entry.get("until", 0)))
+    return until
 
 
 def chat_enabled(event, config) -> bool:

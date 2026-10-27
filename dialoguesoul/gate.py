@@ -64,10 +64,10 @@ class Gate:
     def hard_check(self, event, config, now: float | None = None) -> GateResult | None:
         """只做硬门控；通过返回 ``None``，被拦截返回 skip 结果。"""
         now = time.time() if now is None else now
+        key = ChatKey.from_event(event)
         if not cfg.chat_enabled(event, config):
             return GateResult("skip", "chat_disabled")
-        mute = config.get("_temp_mute", {}) or {}
-        if mute.get("until", 0) > now:
+        if cfg.mute_until(config, key) > now:
             return GateResult("skip", "muted")
         direct = self.is_direct_address(event)
         text = (event.get_message_outline() or "").strip()
@@ -93,8 +93,7 @@ class Gate:
         if any(word in text for word in blacklist):
             return GateResult("skip", "blacklist_keyword")
 
-        key = ChatKey.from_event(event).as_tuple()
-        limited = self._limited(key, config, bypass=direct, now=now)
+        limited = self._limited(key.as_tuple(), config, bypass=direct, now=now)
         if limited:
             return GateResult("skip", limited)
         # 仅在真正通过硬门控后才记入去重表，避免被冷却/限流拦下的消息被误判为重复

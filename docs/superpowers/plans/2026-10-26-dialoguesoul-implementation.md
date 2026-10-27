@@ -56,7 +56,7 @@
 `context` 增加：
 
 ```python
-"summary": {"enabled": False, "provider_id": "", "threshold": 50},
+"summary": {"enabled": False, "provider_id": "", "threshold": 20},
 ```
 
 ### 2.2 门控拆分
@@ -350,7 +350,7 @@ self.strategy = StrategyEngine(self.gate, self.wake, interest_judge=None)
 
 ```python
 class SummaryService:
-    def __init__(self, summarizer, threshold=50):
+    def __init__(self, summarizer, threshold=20):
         self.summarizer = summarizer
         self.threshold = threshold
 

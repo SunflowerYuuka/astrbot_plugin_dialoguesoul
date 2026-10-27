@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 
+from dialoguesoul import config as cfg
 from dialoguesoul.models import ChatKey
 
 
@@ -35,14 +36,22 @@ class Commands:
         return "已重置聊天记录"
 
     async def mute(self, event, minutes: int = 5):
-        self.config["_temp_mute"] = {"until": time.time() + minutes * 60}
+        key = ChatKey.from_event(event)
+        mutes = self.config.get("_temp_mute")
+        if not isinstance(mutes, dict):
+            mutes = {}
+            self.config["_temp_mute"] = mutes
+        mutes[cfg.chat_key_id(key)] = {"until": time.time() + minutes * 60}
         save = getattr(self.config, "save_config", None)
         if callable(save):
             save()
         return f"已静音 {minutes} 分钟"
 
     async def unmute(self, event):
-        self.config.pop("_temp_mute", None)
+        key = ChatKey.from_event(event)
+        mutes = self.config.get("_temp_mute")
+        if isinstance(mutes, dict):
+            mutes.pop(cfg.chat_key_id(key), None)
         save = getattr(self.config, "save_config", None)
         if callable(save):
             save()

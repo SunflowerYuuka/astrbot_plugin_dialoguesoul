@@ -5,6 +5,7 @@ from tests._helpers import install_astrbot_stub
 
 install_astrbot_stub()
 
+from dialoguesoul import config as cfg
 from dialoguesoul.gate import Gate
 from dialoguesoul.models import ChatKey
 
@@ -103,6 +104,18 @@ class HardCheckTest(unittest.TestCase):
         data = config()
         data["_temp_mute"] = {"until": 2000.0}
         self.assertEqual(self.gate.hard_check(E("触发"), data, now=1000.0).reason, "muted")
+
+    def test_hard_check_skips_only_muted_chat(self):
+        data = config()
+        muted_key = ChatKey.from_event(E("触发", message_id="m1"))
+        data["_temp_mute"] = {cfg.chat_key_id(muted_key): {"until": 2000.0}}
+        self.assertEqual(
+            self.gate.hard_check(E("触发", message_id="m1"), data, now=1000.0).reason,
+            "muted",
+        )
+        other = E("触发", message_id="m2")
+        other.get_group_id = lambda: "2"
+        self.assertIsNone(self.gate.hard_check(other, data, now=1000.0))
 
     def test_hard_check_skips_empty_without_direct(self):
         result = self.gate.hard_check(E(""), config())

@@ -1,4 +1,5 @@
 import asyncio
+import time
 import types
 import unittest
 
@@ -222,6 +223,19 @@ class PluginFlowTest(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.assertEqual(plugin.wake.get(key).session_id, wake_meta["session_id"])
+
+    async def test_prune_idle_removes_unlocked_chat_lock(self):
+        plugin = self._plugin()
+        await _collect(plugin, FakeEvent())
+        key = ("p", "bot", "group", "1")
+        self.assertIn(key, plugin._locks)
+        self.assertIn(key, plugin._lock_seen)
+
+        removed = plugin.prune_idle(now=time.time() + 4000, ttl=3600)
+
+        self.assertEqual(removed, 1)
+        self.assertNotIn(key, plugin._locks)
+        self.assertNotIn(key, plugin._lock_seen)
 
 
 if __name__ == "__main__":

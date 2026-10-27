@@ -77,7 +77,7 @@
           },
           "groups": {
             "description": "启用刷屏保护的群聊",
-            "hint": "留空表示所有群；仅在启用后生效",
+            "hint": "留空表示不启用任何群；仅在启用后生效",
             "type": "list",
             "items": { "type": "string" },
             "default": []
@@ -298,7 +298,7 @@
           "threshold": {
             "description": "触发摘要的历史条数",
             "type": "int",
-            "default": 50
+            "default": 20
           }
         }
       },
