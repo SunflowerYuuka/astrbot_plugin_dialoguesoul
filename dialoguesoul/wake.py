@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from dialoguesoul import config as cfg
 from dialoguesoul.models import ChatKey
 
+_RESERVATION_TTL = 60.0
+
 
 @dataclass(frozen=True)
 class WakeLimits:
@@ -61,7 +63,10 @@ class WakeManager:
             try:
                 return int(raw)
             except (TypeError, ValueError):
-                return int(defaults[name])
+                try:
+                    return int(wake.get(name, defaults[name]))
+                except (TypeError, ValueError):
+                    return int(defaults[name])
 
         return WakeLimits(
             value("duration_seconds"),
@@ -80,20 +85,34 @@ class WakeManager:
             or (limits.max_replies > 0 and session.consumed_replies >= limits.max_replies)
         )
 
-    def _drop_session(self, key) -> None:
+    def _drop_session(self, key, session: WakeSession) -> None:
         self._sessions.pop(key, None)
-        self._reserved.pop(key, None)
+        reserved = self._reserved.get(key)
+        if reserved is not None and reserved[0] == session.session_id:
+            self._reserved.pop(key, None)
+
+    @staticmethod
+    def _reservation_expired(reserved, now: float) -> bool:
+        return now - reserved[1] >= _RESERVATION_TTL
+
+    def _prune_reservations(self, now: float) -> None:
+        for key, reserved in list(self._reserved.items()):
+            if self._reservation_expired(reserved, now):
+                self._reserved.pop(key, None)
 
     def clear_expired(self, now: float | None = None):
         now = time.time() if now is None else now
-        for key in [k for k, s in self._sessions.items() if self._expired(s, now)]:
-            self._drop_session(key)
+        for key, session in list(self._sessions.items()):
+            if self._expired(session, now):
+                self._drop_session(key, session)
+        self._prune_reservations(now)
 
     def get(self, key, now: float | None = None) -> WakeSession | None:
         now = time.time() if now is None else now
+        self._prune_reservations(now)
         session = self._sessions.get(key)
         if session is not None and self._expired(session, now):
-            self._drop_session(key)
+            self._drop_session(key, session)
             return None
         return session
 
@@ -102,6 +121,7 @@ class WakeManager:
 
     def reserve(self, key, limits, session_id, now: float | None = None):
         now = time.time() if now is None else now
+        self._prune_reservations(now)
         self.get(key, now)
         self._reserved[key] = (session_id, now)
 
@@ -121,11 +141,16 @@ class WakeManager:
             session.limits = limits
             session.consumed_replies += 1
             session.last_activity_at = now
-            self._reserved.pop(key, None)
+            reserved = self._reserved.get(key)
+            if reserved is not None and reserved[0] == session_id:
+                self._reserved.pop(key, None)
             return True
 
         reserved = self._reserved.get(key)
         if not starts_session or not reserved or reserved[0] != session_id:
+            return False
+        if self._reservation_expired(reserved, now):
+            self._reserved.pop(key, None)
             return False
         self._reserved.pop(key, None)
         self._sessions[key] = WakeSession(

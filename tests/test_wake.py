@@ -6,7 +6,7 @@ from tests._helpers import install_astrbot_stub
 install_astrbot_stub()
 
 from dialoguesoul import config as cfg
-from dialoguesoul.wake import WakeLimits, WakeManager
+from dialoguesoul.wake import _RESERVATION_TTL, WakeLimits, WakeManager
 
 
 def event(group="1", private=False, admin=False):
@@ -63,6 +63,27 @@ class WakeTest(unittest.TestCase):
             (300, 4, 120),
         )
 
+    def test_invalid_override_falls_back_to_global(self):
+        manager = WakeManager()
+        data = config(
+            duration_seconds=200,
+            max_replies=3,
+            idle_timeout_seconds=90,
+            groups=[
+                {
+                    "group_id": "1",
+                    "duration_seconds": "bad",
+                    "max_replies": "nope",
+                    "idle_timeout_seconds": "x",
+                }
+            ],
+        )
+        limits = manager.resolve_limits(EVENT, data)
+        self.assertEqual(
+            (limits.duration_seconds, limits.max_replies, limits.idle_timeout_seconds),
+            (200, 3, 90),
+        )
+
     def test_private_and_admin_defaults_from_config(self):
         manager = WakeManager()
         data = {"wake": cfg.DEFAULTS["wake"]}
@@ -90,6 +111,34 @@ class WakeTest(unittest.TestCase):
         session = manager.get(key, now=1_000_000)
         self.assertIsNotNone(session)
         self.assertEqual(session.consumed_replies, 2)
+
+    def test_expired_reservation_cannot_start_session(self):
+        manager = WakeManager()
+        key = manager.key_for(EVENT)
+        limits = WakeLimits(300, 2, 120)
+        sid = "s1"
+        manager.reserve(key, limits, sid, now=1)
+        self.assertFalse(
+            manager.record_delivery(
+                key, limits, sid, starts_session=True, now=1 + _RESERVATION_TTL
+            )
+        )
+        self.assertFalse(manager.is_active(key, now=1 + _RESERVATION_TTL))
+
+        manager.reserve(key, limits, sid, now=1 + _RESERVATION_TTL)
+        self.assertTrue(
+            manager.record_delivery(
+                key, limits, sid, starts_session=True, now=1 + _RESERVATION_TTL
+            )
+        )
+
+    def test_clear_expired_prunes_stale_reservations(self):
+        manager = WakeManager()
+        key = manager.key_for(EVENT)
+        limits = WakeLimits(300, 2, 120)
+        manager.reserve(key, limits, "s1", now=1)
+        manager.clear_expired(now=1 + _RESERVATION_TTL)
+        self.assertEqual(manager._reserved, {})
 
     def test_reserve_and_delivery_count(self):
         manager = WakeManager()
@@ -148,6 +197,22 @@ class WakeTest(unittest.TestCase):
         manager.reserve(key, limits, "s2", now=100)
         self.assertTrue(
             manager.record_delivery(key, limits, "s2", starts_session=True, now=100)
+        )
+
+    def test_session_cleanup_keeps_newer_reservation(self):
+        manager = WakeManager()
+        key = manager.key_for(EVENT)
+        limits = WakeLimits(100, 5, 0)
+        manager.reserve(key, limits, "old", now=1)
+        self.assertTrue(
+            manager.record_delivery(key, limits, "old", starts_session=True, now=2)
+        )
+        manager.reserve(key, limits, "new", now=50)
+
+        manager.clear_expired(now=103)
+        self.assertFalse(manager.is_active(key, now=103))
+        self.assertTrue(
+            manager.record_delivery(key, limits, "new", starts_session=True, now=103)
         )
 
     def test_mismatched_session_id_does_not_refresh(self):
