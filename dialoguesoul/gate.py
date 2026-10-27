@@ -1,0 +1,123 @@
+from __future__ import annotations
+
+import random
+import re
+import time
+from dataclasses import dataclass
+
+from dialoguesoul import config as cfg
+from dialoguesoul.models import ChatKey
+
+_QUESTION = re.compile(r"[?？]|^(吗|呢|怎么|为什么|如何|什么|谁|哪|几|多少|是不是|能不能|可不可以)")
+
+
+@dataclass(frozen=True)
+class GateResult:
+    action: str
+    reason: str
+    trigger: str = "none"
+    priority: int = 0
+
+
+class Gate:
+    """硬门控与触发判定。
+
+    ``hard_check`` 只做与触发无关的硬性拦截；``check`` 在其结果之上再做
+    直接呼唤、关键词、提问与概率判定。
+    """
+
+    def __init__(self):
+        self._last_reply: dict[tuple, float] = {}
+        self._reply_times: dict[tuple, list[float]] = {}
+        self._seen: dict[str, float] = {}
+        self._seen_ttl = 300.0
+
+    def reset(self):
+        self._last_reply.clear()
+        self._reply_times.clear()
+        self._seen.clear()
+
+    @staticmethod
+    def is_direct_address(event) -> bool:
+        self_id = str(event.get_self_id())
+        components = getattr(getattr(event, "message_obj", None), "message", None) or []
+        for component in components:
+            if str(getattr(component, "qq", "")) == self_id:
+                return True
+            if str(getattr(component, "sender_id", "")) == self_id:
+                return True
+        return False
+
+    def _limited(self, key, config, bypass: bool, now: float) -> str | None:
+        if bypass:
+            return None
+        cooldown = cfg.get(config, "decision.cooldown_ms", 3000) / 1000
+        if now - self._last_reply.get(key, 0) < cooldown:
+            return "cooldown"
+        times = [t for t in self._reply_times.get(key, []) if now - t < 60]
+        self._reply_times[key] = times
+        if len(times) >= cfg.get(config, "decision.max_replies_per_minute", 6):
+            return "rate_limited"
+        return None
+
+    def hard_check(self, event, config, now: float | None = None) -> GateResult | None:
+        """只做硬门控；通过返回 ``None``，被拦截返回 skip 结果。"""
+        now = time.time() if now is None else now
+        if not cfg.chat_enabled(event, config):
+            return GateResult("skip", "chat_disabled")
+        mute = config.get("_temp_mute", {}) or {}
+        if mute.get("until", 0) > now:
+            return GateResult("skip", "muted")
+        direct = self.is_direct_address(event)
+        text = (event.get_message_outline() or "").strip()
+        if not text and not direct:
+            return GateResult("skip", "empty")
+        prefixes = cfg.get(config, "trigger.ignored_prefixes", []) or []
+        stripped = text.lstrip()
+        if any(prefix and stripped.startswith(prefix) for prefix in prefixes):
+            return GateResult("skip", "command_prefix")
+        if str(event.get_sender_id()) == str(event.get_self_id()):
+            return GateResult("skip", "self")
+
+        message_id = str(getattr(getattr(event, "message_obj", None), "message_id", "") or "")
+        seen_key = f"{event.get_platform_name()}:{event.get_group_id() or event.get_sender_id()}:{message_id}"
+        self._seen = {k: t for k, t in self._seen.items() if now - t < self._seen_ttl}
+        if message_id and seen_key in self._seen:
+            return GateResult("skip", "duplicate")
+        if message_id:
+            self._seen[seen_key] = now
+
+        blacklist = cfg.get(config, "trigger.blacklist_keywords", []) or []
+        if any(word in text for word in blacklist):
+            return GateResult("skip", "blacklist_keyword")
+
+        key = ChatKey.from_event(event).as_tuple()
+        limited = self._limited(key, config, bypass=direct, now=now)
+        if limited:
+            return GateResult("skip", limited)
+        return None
+
+    def check(self, event, config, inflight: bool = False, now: float | None = None) -> GateResult:
+        """硬门控 + 触发判定。``inflight`` 预留给调用方的并发锁。"""
+        hard = self.hard_check(event, config, now)
+        if hard is not None:
+            return hard
+        text = (event.get_message_outline() or "").strip()
+        if self.is_direct_address(event):
+            return GateResult("candidate", "mentioned", "mention", 2)
+        keywords = cfg.get(config, "trigger.keywords", []) or []
+        if any(word in text for word in keywords):
+            return GateResult("candidate", "keyword", "keyword", 1)
+        if _QUESTION.search(text):
+            return GateResult("candidate", "question", "question", 1)
+        probability = float(cfg.get(config, "trigger.probability", 0.0) or 0.0)
+        if probability > 0 and random.random() < probability:
+            return GateResult("candidate", "random", "random", 0)
+        return GateResult("skip", "no_trigger")
+
+    def record_reply(self, event, now: float | None = None) -> float:
+        now = time.time() if now is None else now
+        key = ChatKey.from_event(event).as_tuple()
+        self._last_reply[key] = now
+        self._reply_times.setdefault(key, []).append(now)
+        return now
