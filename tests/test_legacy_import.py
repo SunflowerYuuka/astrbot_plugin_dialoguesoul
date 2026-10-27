@@ -53,12 +53,13 @@ class _BadMsg(_Msg):
 class _Logger:
     def __init__(self):
         self.warnings = []
+        self.infos = []
 
     def warning(self, message):
         self.warnings.append(message)
 
     def info(self, message):
-        pass
+        self.infos.append(message)
 
 
 def _encode(messages):
@@ -81,6 +82,10 @@ class LegacyImportTest(unittest.IsolatedAsyncioTestCase):
 
     async def _import(self, logger=None):
         return await import_legacy_history(self.db, self.repo, str(self.base), logger)
+
+    async def _marker(self):
+        row = await self.db.fetchone("SELECT value FROM meta WHERE key='legacy_imported'")
+        return row["value"] if row else None
 
     async def test_import_once(self):
         (self.history_dir / "1.json").write_text(
@@ -114,6 +119,13 @@ class LegacyImportTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(await self._import(), 1)
         self.assertEqual(await self.repo.count("p", "12345", "group", "1"), 1)
+
+    async def test_import_falls_back_to_default_self_id(self):
+        (self.history_dir / "1.json").write_text(_encode([_Msg("a", 1.0)]), encoding="utf-8")
+        self.assertEqual(await self._import(), 1)
+        row = (await self.repo.recent("p", "bot", "group", "1", 10))[0]
+        self.assertEqual(row.self_id, "bot")
+        self.assertEqual(await self.repo.count("p", "12345", "group", "1"), 0)
 
     async def test_import_keeps_rich_components(self):
         msg = _Msg("a", 1.0)
@@ -150,6 +162,46 @@ class LegacyImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(count, 1)
         self.assertEqual(await self.repo.count("p", "bot", "group", "2"), 1)
         self.assertEqual(len(logger.warnings), 1)
+        self.assertEqual(await self._marker(), "partial")
+
+    async def test_broken_file_does_not_claim_full_success(self):
+        (self.history_dir / "1.json").write_text("[not json", encoding="utf-8")
+        logger = _Logger()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            count = await self._import(logger)
+        self.assertEqual(count, 0)
+        self.assertEqual(await self.repo.count("p", "bot", "group", "1"), 0)
+        self.assertNotEqual(await self._marker(), "1")
+        self.assertEqual(await self._marker(), "partial")
+
+    async def test_unresolved_class_dict_item_is_skipped(self):
+        # 类无法解析时 jsonpickle 的 on_missing='ignore' 会把条目解码成 dict，
+        # 若不拦截就会写出一条全空白记录。
+        raw = (
+            '[{"py/object": "missing.module.Klass", "message": [], "timestamp": 1.0,'
+            ' "self_id": "bot", "message_id": "m1",'
+            ' "sender": {"py/object": "missing.module.Sender", "user_id": "u9", "nickname": "U9"}}]'
+        )
+        (self.history_dir / "1.json").write_text(raw, encoding="utf-8")
+        logger = _Logger()
+        self.assertEqual(await self._import(logger), 0)
+        self.assertEqual(await self.repo.count("p", "bot", "group", "1"), 0)
+        self.assertEqual(len(logger.warnings), 1)
+        self.assertEqual(await self._marker(), "partial")
+
+    async def test_plain_dict_item_is_skipped_without_blank_row(self):
+        (self.history_dir / "1.json").write_text(
+            _encode([{"a": 1}, _Msg("a", 2.0)]), encoding="utf-8"
+        )
+        logger = _Logger()
+        self.assertEqual(await self._import(logger), 1)
+        rows = await self.repo.recent("p", "bot", "group", "1", 10)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].components, [{"type": "plain", "text": "a"}])
+        self.assertEqual(rows[0].sender_id, "u1")
+        self.assertEqual(len(logger.warnings), 1)
+        self.assertEqual(await self._marker(), "partial")
 
     async def test_bad_message_is_skipped_and_rest_imported(self):
         (self.history_dir / "1.json").write_text(
@@ -160,12 +212,14 @@ class LegacyImportTest(unittest.IsolatedAsyncioTestCase):
         rows = await self.repo.recent("p", "bot", "group", "1", 10)
         self.assertEqual([r.components[0]["text"] for r in rows], ["a", "b"])
         self.assertEqual(len(logger.warnings), 1)
+        self.assertEqual(await self._marker(), "partial")
 
     async def test_missing_base_path_marks_imported(self):
         missing = Path(self.tmp.name) / "no_such_history"
         self.assertEqual(
             await import_legacy_history(self.db, self.repo, str(missing)), 0
         )
+        self.assertEqual(await self._marker(), "1")
         (self.history_dir / "1.json").write_text(_encode([_Msg("a", 1.0)]), encoding="utf-8")
         self.assertEqual(await self._import(), 0)
         self.assertEqual(await self.repo.count("p", "bot", "group", "1"), 0)
@@ -179,11 +233,13 @@ class LegacyImportTest(unittest.IsolatedAsyncioTestCase):
             )
         )
         (self.history_dir / "1.json").write_text(_encode([_Msg("a", 1.0)]), encoding="utf-8")
-        self.assertEqual(await self._import(), 0)
+        logger = _Logger()
+        self.assertEqual(await self._import(logger), 0)
         self.assertEqual(await self.repo.count("p", "bot", "group", "1"), 1)
+        self.assertEqual(await self._marker(), "skipped_existing")
+        self.assertEqual(logger.infos, ["数据库已有消息，跳过旧历史导入（标记 skipped_existing）"])
 
     async def test_import_is_marked_in_meta(self):
         (self.history_dir / "1.json").write_text(_encode([_Msg("a", 1.0)]), encoding="utf-8")
         await self._import()
-        row = await self.db.fetchone("SELECT value FROM meta WHERE key='legacy_imported'")
-        self.assertEqual(row["value"], "1")
+        self.assertEqual(await self._marker(), "1")
