@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import time
+
+from dialoguesoul.models import ChatKey, ChatMessage
+
 _SCALAR_FIELDS = ("text", "url", "file", "path", "id", "qq", "sender_id", "name")
 _RECURSIVE_FIELDS = ("chain", "nodes")
 _IMAGE_SOURCE_FIELDS = ("url", "file", "path")
@@ -58,3 +62,18 @@ def collect_forward_ids(components) -> list[str]:
         for c in map(_as_dict, components)
         if c.get("type") == "forward" and c.get("id")
     ]
+
+
+def user_message_from_event(event) -> ChatMessage:
+    key = ChatKey.from_event(event)
+    return ChatMessage(
+        platform=key.platform,
+        self_id=key.self_id,
+        chat_type=key.chat_type,
+        chat_id=key.chat_id,
+        message_id=str(getattr(event.message_obj, "message_id", "") or ""),
+        sender_id=str(event.get_sender_id()),
+        sender_name=str(event.get_sender_name() or ""),
+        timestamp=time.time(),
+        components=[component_to_dict(c) for c in event.message_obj.message],
+    )

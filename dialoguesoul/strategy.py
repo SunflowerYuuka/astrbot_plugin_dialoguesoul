@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+import time
+from collections import defaultdict
+from dataclasses import dataclass
+
+from dialoguesoul import config as cfg
+from dialoguesoul.gate import GateResult
+from dialoguesoul.models import ChatKey
+
+
+@dataclass(frozen=True)
+class RouteDecision:
+    kind: str
+    gate: GateResult | None = None
+    wake_session: object = None
+
+
+class BurstGate:
+    def __init__(self):
+        self._times = defaultdict(list)
+        self._burst_until = {}
+
+    def record(self, key, now=None):
+        now = time.time() if now is None else now
+        self._times[key] = [t for t in self._times[key] if now - t < 60]
+        self._times[key].append(now)
+
+    def is_bursting(self, key, config, now=None):
+        now = time.time() if now is None else now
+        if not cfg.get(config, "trigger.burst.enabled", False):
+            return False
+        groups = {str(g) for g in cfg.get(config, "trigger.burst.groups", [])}
+        if key[3] not in groups:
+            return False
+        threshold = int(cfg.get(config, "trigger.burst.threshold", 50))
+        recent = [t for t in self._times[key] if now - t < 30]
+        if len(recent) >= threshold:
+            self._burst_until[key] = now + int(
+                cfg.get(config, "trigger.burst.cooldown_seconds", 30)
+            )
+            return True
+        return self._burst_until.get(key, 0) > now
+
+
+class StrategyEngine:
+    def __init__(self, gate, wake, interest_judge=None):
+        self.gate = gate
+        self.wake = wake
+        self.interest_judge = interest_judge
+        self.burst = BurstGate()
+        self._last_considered = {}
+
+    async def route(self, event, config, history_text="", now=None):
+        now = time.time() if now is None else now
+        key = ChatKey.from_event(event).as_tuple()
+        direct = self.gate.is_direct_address(event)
+
+        session = None
+        if cfg.get(config, "wake.enabled", False):
+            session = self.wake.get(key, now)
+        if session is not None:
+            hard = self.gate.hard_check(event, config, now)
+            if hard is None:
+                return RouteDecision("decision", None, session)
+            return RouteDecision("ignore", hard)
+
+        if direct:
+            hard = self.gate.hard_check(event, config, now)
+            if hard is None:
+                return RouteDecision("normal")
+            return RouteDecision("ignore", hard)
+
+        if self.burst.is_bursting(key, config, now):
+            return RouteDecision("ignore")
+        self.burst.record(key, now)
+
+        strategy = cfg.get(config, "trigger.strategy", "window")
+        if strategy == "rules":
+            result = self.gate.check(event, config, now=now)
+            if result.action != "candidate":
+                return RouteDecision("ignore", result)
+            return RouteDecision("decision", result)
+
+        hard = self.gate.hard_check(event, config, now)
+        if hard is not None:
+            return RouteDecision("ignore", hard)
+
+        if strategy == "window":
+            window = float(cfg.get(config, "trigger.window_seconds", 30))
+            if now - self._last_considered.get(key, 0) < window:
+                return RouteDecision("ignore")
+        elif strategy == "interest":
+            if self.interest_judge is None:
+                return RouteDecision("ignore")
+            if not await self.interest_judge(event, history_text):
+                return RouteDecision("ignore")
+
+        if strategy == "window":
+            self._last_considered[key] = now
+        return RouteDecision("decision", GateResult("candidate", strategy, strategy, 1))

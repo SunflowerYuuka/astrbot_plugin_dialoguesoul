@@ -1,0 +1,105 @@
+from __future__ import annotations
+
+import inspect
+
+from dialoguesoul import config as cfg
+from dialoguesoul.context.forwards import ForwardRenderer
+from dialoguesoul.context.images import CaptionService
+from dialoguesoul.context.summary import SummaryService
+from dialoguesoul.interest import InterestJudge
+
+
+async def _provider(context, umo: str, provider_id: str):
+    provider = None
+    if provider_id and hasattr(context, "get_provider_by_id"):
+        provider = context.get_provider_by_id(provider_id)
+    if provider is None and hasattr(context, "get_using_provider"):
+        provider = context.get_using_provider(umo=umo)
+    if inspect.isawaitable(provider):
+        provider = await provider
+    return provider
+
+
+def build_caption_service(context, config):
+    if not cfg.get(config, "context.image_caption.enabled", False):
+        return None
+
+    async def captioner(umo: str, url: str) -> str:
+        provider = await _provider(
+            context, umo, cfg.get(config, "context.image_caption.provider_id", "")
+        )
+        if provider is None:
+            return ""
+        response = await provider.text_chat(
+            prompt=cfg.get(
+                config, "context.image_caption.prompt", "请直接简短描述这张图片"
+            ),
+            image_urls=[url],
+        )
+        return (getattr(response, "completion_text", "") or "").strip()
+
+    return CaptionService(
+        captioner,
+        concurrency=cfg.get(config, "context.image_caption.concurrency", 3),
+        cache_size=cfg.get(config, "context.image_caption.cache_size", 128),
+    )
+
+
+def build_forward_renderer(event, config):
+    if not cfg.get(config, "context.forward.parse", False):
+        return None
+
+    async def fetcher(forward_id: str):
+        bot = getattr(event, "bot", None)
+        if bot and hasattr(bot, "api") and hasattr(bot.api, "get_forward_msg"):
+            return await bot.api.get_forward_msg(forward_id)
+        call_api = getattr(event, "call_api", None)
+        if callable(call_api):
+            return await call_api("get_forward_msg", {"id": forward_id})
+        return {}
+
+    return ForwardRenderer(
+        fetcher,
+        max_depth=cfg.get(config, "context.forward.max_depth", 2),
+        max_nodes=cfg.get(config, "context.forward.max_nodes", 50),
+        max_chars=cfg.get(config, "context.forward.max_chars", 2000),
+        timeout=cfg.get(config, "context.forward.timeout", 5),
+    )
+
+
+def build_summary_service(context, config):
+    if not cfg.get(config, "context.summary.enabled", False):
+        return None
+
+    async def summarizer(umo, fallback):
+        provider = await _provider(
+            context, umo, cfg.get(config, "context.summary.provider_id", "")
+        )
+        if provider is None:
+            return fallback
+        response = await provider.text_chat(
+            prompt="请把以下群聊记录压缩成简要摘要，保留人物、话题和结论：\n" + fallback,
+            system_prompt="只输出摘要正文。",
+        )
+        return (getattr(response, "completion_text", "") or "").strip() or fallback
+
+    return SummaryService(
+        summarizer,
+        threshold=int(cfg.get(config, "context.summary.threshold", 50)),
+    )
+
+
+def build_interest_judge(context, config):
+    if cfg.get(config, "trigger.strategy", "window") != "interest":
+        return None
+
+    async def resolver(event):
+        return await _provider(
+            context,
+            event.unified_msg_origin,
+            cfg.get(config, "trigger.interest.provider_id", ""),
+        )
+
+    return InterestJudge(
+        resolver, "判断这条群聊消息是否值得你像群友一样接话。只输出 YES 或 NO。"
+    )
