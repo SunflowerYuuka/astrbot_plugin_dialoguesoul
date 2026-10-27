@@ -25,6 +25,516 @@
 
 ---
 
+## 修订 2：高流量、多策略与决策格式
+
+> 本节优先于下文任务中的旧实现。未提到的部分按下文执行。
+
+### 2.1 配置新增
+
+`trigger` 增加：
+
+```python
+"strategy": "window",          # every_message | rules | window | interest
+"window_seconds": 30,
+"interest": {"provider_id": ""},
+"burst": {
+    "enabled": False,
+    "groups": [],
+    "threshold": 50,
+    "cooldown_seconds": 30,
+},
+```
+
+`decision` 增加：
+
+```python
+"format": "marker",            # marker | json
+```
+
+`wake.max_messages` 改为 `wake.max_replies`，默认 5。
+
+`context` 增加：
+
+```python
+"summary": {"enabled": False, "provider_id": "", "threshold": 50},
+```
+
+### 2.2 门控拆分
+
+`Gate` 增加 `hard_check`，只做硬门控，不判断触发：
+
+```python
+def hard_check(self, event, config, now=None):
+    now = time.time() if now is None else now
+    if not cfg.chat_enabled(event, config):
+        return GateResult("skip", "chat_disabled")
+    mute = config.get("_temp_mute", {}) or {}
+    if mute.get("until", 0) > now:
+        return GateResult("skip", "muted")
+    direct = self.is_direct_address(event)
+    text = (event.get_message_outline() or "").strip()
+    if not text and not direct:
+        return GateResult("skip", "empty")
+    prefixes = cfg.get(config, "trigger.ignored_prefixes", []) or []
+    stripped = text.lstrip()
+    if any(prefix and stripped.startswith(prefix) for prefix in prefixes):
+        return GateResult("skip", "command_prefix")
+    if str(event.get_sender_id()) == str(event.get_self_id()):
+        return GateResult("skip", "self")
+    message_id = str(getattr(getattr(event, "message_obj", None), "message_id", "") or "")
+    seen_key = f"{event.get_platform_name()}:{event.get_group_id() or event.get_sender_id()}:{message_id}"
+    self._seen = {k: t for k, t in self._seen.items() if now - t < self._seen_ttl}
+    if message_id and seen_key in self._seen:
+        return GateResult("skip", "duplicate")
+    if message_id:
+        self._seen[seen_key] = now
+    blacklist = cfg.get(config, "trigger.blacklist_keywords", []) or []
+    if any(word in text for word in blacklist):
+        return GateResult("skip", "blacklist_keyword")
+    key = ChatKey.from_event(event).as_tuple()
+    limited = self._limited(key, config, bypass=direct)
+    if limited:
+        return GateResult("skip", limited)
+    return None
+```
+
+`Gate.check` 改为：
+
+```python
+def check(self, event, config, inflight=False, now=None):
+    hard = self.hard_check(event, config, now)
+    if hard is not None:
+        return hard
+    text = (event.get_message_outline() or "").strip()
+    if self.is_direct_address(event):
+        return GateResult("candidate", "mentioned", "mention", 2)
+    keywords = cfg.get(config, "trigger.keywords", []) or []
+    if any(word in text for word in keywords):
+        return GateResult("candidate", "keyword", "keyword", 1)
+    if _QUESTION.search(text):
+        return GateResult("candidate", "question", "question", 1)
+    probability = float(cfg.get(config, "trigger.probability", 0.0) or 0.0)
+    if probability > 0 and random.random() < probability:
+        return GateResult("candidate", "random", "random", 0)
+    return GateResult("skip", "no_trigger")
+```
+
+### 2.3 决策格式
+
+`decision.py` 增加：
+
+```python
+NO_RESPONSE = "<NO_RESPONSE>"
+
+def build_marker_instruction() -> str:
+    return (
+        "\n\n[参与判断]\n"
+        "你是群成员，像普通群友一样聊天。想接话就直接输出要发送的内容；"
+        "不想接话就只输出 <NO_RESPONSE>。\n"
+        "不要解释，不要输出 JSON。\n"
+    )
+
+def parse_marker(text: str) -> Decision:
+    cleaned = (text or "").strip()
+    if not cleaned or NO_RESPONSE in cleaned:
+        return Decision("ignore", "marker", [], 0.0, None)
+    return Decision("reply", "marker", [cleaned], 1.0, None)
+
+def rewrite_marker_response(decision: Decision, resp) -> None:
+    resp.completion_text = "" if decision.action == "ignore" else "\n".join(decision.messages)
+```
+
+### 2.4 唤醒改为成功接话计数
+
+`WakeLimits` 使用 `max_replies`；`WakeSession` 使用 `consumed_replies`。
+
+```python
+@dataclass(frozen=True)
+class WakeLimits:
+    duration_seconds: int = 300
+    max_replies: int = 5
+    idle_timeout_seconds: int = 120
+
+
+@dataclass
+class WakeSession:
+    limits: WakeLimits
+    started_at: float
+    last_activity_at: float
+    session_id: str
+    consumed_replies: int = 0
+```
+
+`_expired` 使用 `consumed_replies >= limits.max_replies`。
+
+`WakeManager` 增加预留与送达计数：
+
+```python
+def __init__(self):
+    self._sessions = {}
+    self._reserved = {}
+
+def reserve(self, key, limits, session_id, now=None):
+    now = time.time() if now is None else now
+    self._reserved[key] = (session_id, now)
+
+def record_delivery(self, key, limits, session_id, starts_session=False, now=None):
+    now = time.time() if now is None else now
+    session = self.get(key, now)
+    if session is not None:
+        if session.session_id != session_id:
+            return False
+        session.limits = limits
+        session.consumed_replies += 1
+        session.last_activity_at = now
+        return True
+    reserved = self._reserved.get(key)
+    if not starts_session or not reserved or reserved[0] != session_id:
+        return False
+    self._reserved.pop(key, None)
+    self._sessions[key] = WakeSession(limits, now, now, session_id, 1)
+    return True
+```
+
+`resolve_limits` 中 `max_messages` 改为 `max_replies`。
+
+### 2.5 策略引擎
+
+新增 `dialoguesoul/strategy.py`：
+
+```python
+from __future__ import annotations
+
+import time
+from collections import defaultdict
+from dataclasses import dataclass
+
+from dialoguesoul import config as cfg
+from dialoguesoul.gate import GateResult
+from dialoguesoul.models import ChatKey
+
+
+@dataclass(frozen=True)
+class RouteDecision:
+    kind: str
+    gate: GateResult | None = None
+    wake_session: object = None
+
+
+class BurstGate:
+    def __init__(self):
+        self._times = defaultdict(list)
+        self._burst_until = {}
+
+    def record(self, key, now=None):
+        now = time.time() if now is None else now
+        self._times[key] = [t for t in self._times[key] if now - t < 60]
+        self._times[key].append(now)
+
+    def is_bursting(self, key, config, now=None):
+        now = time.time() if now is None else now
+        if not cfg.get(config, "trigger.burst.enabled", False):
+            return False
+        groups = {str(g) for g in cfg.get(config, "trigger.burst.groups", [])}
+        if key[3] not in groups:
+            return False
+        threshold = int(cfg.get(config, "trigger.burst.threshold", 50))
+        recent = [t for t in self._times[key] if now - t < 30]
+        if len(recent) >= threshold:
+            self._burst_until[key] = now + int(cfg.get(config, "trigger.burst.cooldown_seconds", 30))
+            return True
+        return self._burst_until.get(key, 0) > now
+
+
+class StrategyEngine:
+    def __init__(self, gate, wake, interest_judge=None):
+        self.gate = gate
+        self.wake = wake
+        self.interest_judge = interest_judge
+        self.burst = BurstGate()
+        self._last_considered = {}
+
+    async def route(self, event, config, now=None):
+        now = time.time() if now is None else now
+        key = ChatKey.from_event(event).as_tuple()
+        self.burst.record(key, now)
+        direct = self.gate.is_direct_address(event)
+
+        session = None
+        if cfg.get(config, "wake.enabled", False):
+            session = self.wake.get(key, now)
+        if session is not None:
+            hard = self.gate.hard_check(event, config, now)
+            return RouteDecision("decision", hard, session) if hard is None else RouteDecision("ignore", hard)
+
+        if direct:
+            hard = self.gate.hard_check(event, config, now)
+            return RouteDecision("normal", hard) if hard is None else RouteDecision("ignore", hard)
+
+        if self.burst.is_bursting(key, config, now):
+            return RouteDecision("ignore")
+
+        strategy = cfg.get(config, "trigger.strategy", "window")
+        if strategy == "rules":
+            result = self.gate.check(event, config, now=now)
+            if result.action != "candidate":
+                return RouteDecision("ignore", result)
+            return RouteDecision("decision", result)
+
+        hard = self.gate.hard_check(event, config, now)
+        if hard is not None:
+            return RouteDecision("ignore", hard)
+
+        if strategy == "window":
+            window = float(cfg.get(config, "trigger.window_seconds", 30))
+            if now - self._last_considered.get(key, 0) < window:
+                return RouteDecision("ignore")
+            self._last_considered[key] = now
+        elif strategy == "interest":
+            if self.interest_judge is None or not await self.interest_judge(event):
+                return RouteDecision("ignore")
+
+        return RouteDecision("decision", GateResult("candidate", strategy, strategy, 1))
+```
+
+### 2.6 用户消息入库与单群单决策
+
+`context/components.py` 增加：
+
+```python
+from dialoguesoul.models import ChatKey, ChatMessage
+
+def user_message_from_event(event) -> ChatMessage:
+    key = ChatKey.from_event(event)
+    sender = getattr(event.message_obj, "sender", None)
+    return ChatMessage(
+        platform=key.platform, self_id=key.self_id, chat_type=key.chat_type,
+        chat_id=key.chat_id,
+        message_id=str(getattr(event.message_obj, "message_id", "") or ""),
+        sender_id=str(event.get_sender_id()),
+        sender_name=str(event.get_sender_name() or ""),
+        timestamp=time.time(),
+        components=[component_to_dict(c) for c in event.message_obj.message],
+    )
+```
+
+`DialoguesSoulPlugin.handle_message` 前置：
+
+```python
+key = ChatKey.from_event(event).as_tuple()
+if cfg.chat_enabled(event, self.config) and str(event.get_sender_id()) != str(event.get_self_id()):
+    await self.repo.append(user_message_from_event(event))
+
+lock = self._locks.setdefault(key, asyncio.Lock())
+direct = self.gate.is_direct_address(event)
+if lock.locked() and not direct:
+    return
+async with lock:
+    route = await self.strategy.route(event, self.config)
+    if route.kind == "ignore":
+        return
+    decision = route.kind == "decision"
+    ...
+```
+
+`__init__` 增加：
+
+```python
+self._locks = {}
+self.strategy = StrategyEngine(self.gate, self.wake, interest_judge=None)
+```
+
+### 2.7 可选摘要与兴趣判断
+
+新增 `dialoguesoul/context/summary.py`：
+
+```python
+class SummaryService:
+    def __init__(self, summarizer, threshold=50):
+        self.summarizer = summarizer
+        self.threshold = threshold
+
+    async def summarize(self, messages, umo, fallback):
+        if len(messages) < self.threshold:
+            return fallback
+        return await self.summarizer(umo, fallback)
+```
+
+新增 `dialoguesoul/interest.py`：
+
+```python
+class InterestJudge:
+    def __init__(self, provider_resolver, prompt):
+        self.provider_resolver = provider_resolver
+        self.prompt = prompt
+
+    async def __call__(self, event):
+        provider = await self.provider_resolver(event)
+        if provider is None:
+            return False
+        response = await provider.text_chat(
+            prompt=self.prompt,
+            system_prompt="只输出 YES 或 NO。",
+        )
+        return "YES" in (getattr(response, "completion_text", "") or "").upper()
+```
+
+`context/live.py` 增加 `build_summary_service` 与 `build_interest_judge`，使用 `_provider` 解析；摘要 prompt 要求“压缩为简要群聊摘要”。
+
+### 2.8 钩子调整
+
+`Hooks.on_llm_response`：
+
+```python
+fmt = event.get_extra("ds_decision_format", "marker")
+if fmt == "marker":
+    decision = parse_marker(getattr(resp, "completion_text", ""))
+    rewrite_marker_response(decision, resp)
+else:
+    decision = parse_decision(...)
+    rewrite_response(decision, resp)
+event.set_extra("ds_decision", decision)
+```
+
+`Hooks.on_decorating_result`：
+
+```python
+if fmt == "marker":
+    if decision is None or decision.action != "reply":
+        event.clear_result()
+    return
+# json 分支：重建消息链 + quote
+```
+
+`after_message_sent`：只有 `ds_request_kind` 存在才保存；`ds_wake` 存在时调用 `record_delivery`，不再调用 `claim`。
+
+### 2.9 新增测试
+
+`tests/test_strategy.py`：
+
+```python
+import types
+import unittest
+
+from tests._helpers import install_astrbot_stub
+
+install_astrbot_stub()
+
+from dialoguesoul.gate import Gate
+from dialoguesoul.strategy import StrategyEngine
+from dialoguesoul.wake import WakeManager
+
+
+class E:
+    def __init__(self, text="hi", group="1", components=None):
+        self.text = text
+        self.group = group
+        self.message_obj = types.SimpleNamespace(message=components or [], message_id="m1")
+
+    def get_platform_name(self): return "p"
+    def get_self_id(self): return "bot"
+    def get_sender_id(self): return "u"
+    def get_group_id(self): return self.group
+    def is_private_chat(self): return False
+    def get_message_outline(self): return self.text
+
+
+def config(strategy, **extra):
+    base = {
+        "enabled": True,
+        "enable_all_groups": True,
+        "trigger": {
+            "strategy": strategy,
+            "window_seconds": 30,
+            "probability": 0.0,
+            "keywords": ["触发"],
+            "blacklist_keywords": [],
+            "ignored_prefixes": [],
+        },
+        "decision": {"cooldown_ms": 0, "max_replies_per_minute": 99},
+        "wake": {"enabled": False},
+    }
+    base.update(extra)
+    return base
+
+
+class StrategyTest(unittest.IsolatedAsyncioTestCase):
+    async def test_every_message_and_window(self):
+        engine = StrategyEngine(Gate(), WakeManager())
+        self.assertEqual((await engine.route(E("普通"), config("every_message"))).kind, "decision")
+        first = await engine.route(E("普通"), config("window"))
+        second = await engine.route(E("普通"), config("window"))
+        self.assertEqual(first.kind, "decision")
+        self.assertEqual(second.kind, "ignore")
+
+    async def test_rules_requires_trigger(self):
+        engine = StrategyEngine(Gate(), WakeManager())
+        self.assertEqual((await engine.route(E("普通"), config("rules"))).kind, "ignore")
+        self.assertEqual((await engine.route(E("触发"), config("rules"))).kind, "decision")
+
+    async def test_interest_judge(self):
+        async def judge(event):
+            return event.text == "想聊"
+
+        engine = StrategyEngine(Gate(), WakeManager(), interest_judge=judge)
+        self.assertEqual((await engine.route(E("不想"), config("interest"))).kind, "ignore")
+        self.assertEqual((await engine.route(E("想聊"), config("interest"))).kind, "decision")
+
+    async def test_burst_only_configured_group(self):
+        engine = StrategyEngine(Gate(), WakeManager())
+        data = config("every_message", trigger={
+            "strategy": "every_message", "burst": {
+                "enabled": True, "groups": ["1"], "threshold": 2, "cooldown_seconds": 30,
+            },
+        })
+        await engine.route(E("a"), data)
+        await engine.route(E("b"), data)
+        self.assertEqual((await engine.route(E("c"), data)).kind, "ignore")
+```
+
+`tests/test_decision.py` 增加：
+
+```python
+from dialoguesoul.decision import parse_marker, rewrite_marker_response
+
+def test_marker_reply_and_ignore():
+    resp = types.SimpleNamespace(completion_text="hi")
+    rewrite_marker_response(parse_marker("hi"), resp)
+    assert resp.completion_text == "hi"
+    rewrite_marker_response(parse_marker("<NO_RESPONSE>"), resp)
+    assert resp.completion_text == ""
+```
+
+`tests/test_wake.py` 增加：
+
+```python
+def test_successful_delivery_counts_replies():
+    manager = WakeManager()
+    key = manager.key_for(EVENT)
+    limits = WakeLimits(300, 2, 120)
+    sid = "s1"
+    manager.reserve(key, limits, sid, now=1)
+    assert manager.record_delivery(key, limits, sid, starts_session=True, now=2)
+    assert manager.is_active(key, now=2)
+    assert manager.record_delivery(key, limits, sid, starts_session=False, now=3)
+    assert not manager.is_active(key, now=3)
+```
+
+- `test_context.py` / `test_media.py`：用户消息入库、摘要可选。
+- `test_plugin_flow.py`：每群单决策、非 @ 跳过、@ 等待。
+
+### 2.10 任务替换关系
+
+| 任务 | 替换内容 |
+|---|---|
+| 任务 2 | 配置按 2.1 增加 strategy/window/interest/burst/format/summary/max_replies |
+| 任务 5 | 门控按 2.2 拆出 `hard_check` |
+| 任务 6 | 决策按 2.3 增加 marker |
+| 任务 7 | 唤醒按 2.4 改为成功接话计数与预留 |
+| 任务 10 | 请求按 `decision.format` 选择协议；摘要按 2.7 |
+| 任务 11 | 钩子按 2.8 处理 marker/json 与唤醒计数 |
+| 任务 12 | 路由与 `handle_message` 按 2.5/2.6 替换 |
+
 ## 文件结构
 
 ```
@@ -44,6 +554,8 @@ astrbot_plugin_dialoguesoul/
     gate.py
     decision.py
     wake.py
+    strategy.py
+    interest.py
     router.py
     request_builder.py
     hooks.py
@@ -62,6 +574,7 @@ astrbot_plugin_dialoguesoul/
       persona.py
       images.py
       forwards.py
+      summary.py
   tests/
     __init__.py
     _helpers.py
@@ -73,6 +586,7 @@ astrbot_plugin_dialoguesoul/
     test_wake.py
     test_context.py
     test_media.py
+    test_strategy.py
     test_request_builder.py
     test_hooks.py
     test_plugin_flow.py
@@ -95,7 +609,7 @@ astrbot_plugin_dialoguesoul/
 - 创建：`tests/test_version_consistency.py`
 
 **接口：**
-- Produces: `tests._helpers.install_astrbot_stub()` 供后续测试导入 `astrbot`。
+- 产出：`tests._helpers.install_astrbot_stub()` 供后续测试导入 `astrbot`。
 
 - [ ] **步骤 1：写版本一致性测试**
 
@@ -314,7 +828,7 @@ git commit -m "chore: scaffold DialoguesSoul"
 - 创建：`tests/test_config.py`
 
 **接口：**
-- Produces: `dialoguesoul.config.get(config, path, default)`, `chat_enabled(event, config)`, `DEFAULTS`。
+- 产出：`dialoguesoul.config.get(config, path, default)`, `chat_enabled(event, config)`, `DEFAULTS`。
 
 - [ ] **步骤 1：写失败测试**
 
@@ -636,8 +1150,8 @@ git commit -m "feat: add config defaults and schema"
 - 创建：`tests/test_storage.py`
 
 **接口：**
-- Produces: `ChatKey.from_event`, `ChatMessage`, `Database`, `SqliteHistoryRepository.append/recent/clear/count/prune`。
-- Produces: `component_to_dict`, `collect_text`, `collect_image_urls`, `collect_forward_ids`。
+- 产出：`ChatKey.from_event`, `ChatMessage`, `Database`, `SqliteHistoryRepository.append/recent/clear/count/prune`。
+- 产出：`component_to_dict`, `collect_text`, `collect_image_urls`, `collect_forward_ids`。
 
 - [ ] **步骤 1：写失败测试**
 
@@ -978,7 +1492,7 @@ git commit -m "feat: add sqlite history repository"
 - 创建：`tests/test_legacy_import.py`
 
 **接口：**
-- Produces: `import_legacy_history(db, repo, base_path, logger=None) -> int`；`meta.legacy_imported` 标记。
+- 产出：`import_legacy_history(db, repo, base_path, logger=None) -> int`；`meta.legacy_imported` 标记。
 
 - [ ] **步骤 1：写失败测试**
 
@@ -1151,7 +1665,7 @@ git commit -m "feat: import legacy spectrecore history"
 - 创建：`tests/test_gate.py`
 
 **接口：**
-- Produces: `GateResult`, `Gate.check(event, config, inflight=False, now=None)`, `Gate.record_reply(event, now=None)`。
+- 产出：`GateResult`, `Gate.check(event, config, inflight=False, now=None)`, `Gate.record_reply(event, now=None)`。
 
 - [ ] **步骤 1：写失败测试**
 
@@ -1370,7 +1884,7 @@ git commit -m "feat: add gate and trigger rules"
 - 创建：`tests/test_decision.py`
 
 **接口：**
-- Produces: `Decision`, `parse_decision(text, max_messages, min_confidence)`, `build_decision_instruction()`, `rewrite_response(decision, resp)`。
+- 产出：`Decision`, `parse_decision`, `parse_marker`, `build_decision_instruction`, `build_marker_instruction`, `rewrite_response`, `rewrite_marker_response`。
 
 - [ ] **步骤 1：写失败测试**
 
@@ -1518,7 +2032,7 @@ git commit -m "feat: add decision protocol"
 - 创建：`tests/test_wake.py`
 
 **接口：**
-- Produces: `WakeLimits`, `WakeSession`, `WakeManager.resolve_limits/get/is_active/claim/record_delivery/clear_expired`。
+- 产出：`WakeLimits`, `WakeSession`, `WakeManager.resolve_limits/get/is_active/reserve/record_delivery/clear_expired`。
 
 - [ ] **步骤 1：写失败测试**
 
@@ -1748,7 +2262,7 @@ git commit -m "feat: add wake session manager"
 - 创建：`tests/test_context.py`
 
 **接口：**
-- Produces: `component_to_dict`, `collect_text`, `collect_image_urls`, `collect_forward_ids`, `format_history`, `build_system_prompt`, `build_environment`, `resolve_persona_prompt`。
+- 产出：`component_to_dict`, `collect_text`, `collect_image_urls`, `collect_forward_ids`, `format_history`, `build_system_prompt`, `build_environment`, `resolve_persona_prompt`。
 
 - [ ] **步骤 1：写失败测试**
 
@@ -1892,10 +2406,11 @@ git commit -m "feat: add context formatting and prompts"
 **文件：**
 - 创建：`dialoguesoul/context/images.py`
 - 创建：`dialoguesoul/context/forwards.py`
+- 创建：`dialoguesoul/context/summary.py`
 - 创建：`tests/test_media.py`
 
 **接口：**
-- Produces: `CaptionService.caption(urls, umo) -> dict[str,str]`，`ForwardRenderer.render(forward_id) -> str`。
+- 产出：`CaptionService.caption(urls, umo) -> dict[str,str]`，`ForwardRenderer.render(forward_id) -> str`，`SummaryService.summarize(messages, umo, fallback) -> str`。
 
 - [ ] **步骤 1：写失败测试**
 
@@ -2055,7 +2570,7 @@ git commit -m "feat: add caption and forward services"
 - 创建：`tests/test_request_builder.py`
 
 **接口：**
-- Produces: `BuiltRequest(request, wake_meta)`，`RequestBuilder.build(event, config, decision, wake_session)`。
+- 产出：`BuiltRequest(request, wake_meta)`，`RequestBuilder.build(event, config, decision, wake_session, decision_format)`。
 
 - [ ] **步骤 1：写失败测试**
 
@@ -2250,7 +2765,7 @@ git commit -m "feat: build enriched provider requests"
 - 创建：`tests/test_hooks.py`
 
 **接口：**
-- Produces: `Hooks.on_llm_response(event, resp)`, `on_decorating_result(event)`, `after_message_sent(event)`。
+- 产出：`Hooks.on_llm_response(event, resp)`, `on_decorating_result(event)`, `after_message_sent(event)`。
 
 - [ ] **步骤 1：写失败测试**
 
@@ -2410,6 +2925,8 @@ git commit -m "feat: add response and send hooks"
 
 **文件：**
 - 创建：`dialoguesoul/router.py`
+- 创建：`dialoguesoul/strategy.py`
+- 创建：`dialoguesoul/interest.py`
 - 创建：`dialoguesoul/plugin.py`
 - 创建：`dialoguesoul/commands.py`
 - 创建：`dialoguesoul/context/live.py`
@@ -2417,7 +2934,7 @@ git commit -m "feat: add response and send hooks"
 - 创建：`tests/test_plugin_flow.py`
 
 **接口：**
-- Produces: `DialoguesSoulPlugin` 核心类；`Router.route(event, gate_result, wake_key)`。
+- 产出：`DialoguesSoulPlugin` 核心类；`StrategyEngine.route(event, config)`；`InterestJudge`。
 
 - [ ] **步骤 1：写失败测试**
 
@@ -2863,7 +3380,7 @@ git commit -m "feat: wire plugin, router and commands"
 
 - [ ] **步骤 3：编译与差异检查**
 
-Run:
+运行：
 
 ```powershell
 python -m compileall -q main.py dialoguesoul tests
@@ -2886,14 +3403,17 @@ git commit -m "docs: complete v1.0.0 release notes"
 - Spec coverage：
   - AstrBot 管线、知识库、钩子：任务 10/11/12
   - SQLite 历史与旧 JSON 导入：任务 3/4
-  - 触发与门控：任务 5
-  - 决策协议与引用：任务 6/11
-  - 唤醒会话：任务 7/12
-  - 上下文、图片转述、转发：任务 8/9/10
+  - 触发与门控：任务 5 + 修订 2.2/2.5
+  - 四种触发策略、突发模式、窗口采样：修订 2.5 + `test_strategy.py`
+  - 决策协议 marker/json、引用：任务 6/11 + 修订 2.3/2.8
+  - 唤醒按成功接话计数：任务 7/12 + 修订 2.4
+  - 上下文、图片转述、转发、可选摘要：任务 8/9/10 + 修订 2.7
+  - 用户消息入库、每群单决策、@ 等待：修订 2.6
   - 指令：任务 12
   - 许可与鸣谢：任务 1/13
 - 无 TBD/TODO 占位。
-- 接口命名在任务间保持一致：`ChatKey`、`ChatMessage`、`Decision`、`WakeLimits`、`RequestBuilder.build`、`Hooks.*`。
+- 接口命名在任务间保持一致：`ChatKey`、`ChatMessage`、`Decision`、`WakeLimits`、`RequestBuilder.build`、`Hooks.*`、`StrategyEngine`。
+- 修订 2 优先于任务中的旧实现；执行任务 2/5/6/7/10/11/12 时按 2.10 替换关系处理。
 - 已知实现注意：
   - `main.py` 的 `data/chat_history` 与 `data/dialoguesoul.sqlite3` 路径需按 AstrBot 实际工作目录调整。
-  - `CaptionService` 与 `ForwardRenderer` 已在任务 12 的 `context/live.py` 接线。
+  - `CaptionService`、`ForwardRenderer`、`SummaryService` 已在任务 12 的 `context/live.py` 接线。
