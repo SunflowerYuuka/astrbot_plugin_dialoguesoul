@@ -61,6 +61,7 @@
           "provider_id": {
             "description": "兴趣判断 Provider ID，留空用当前",
             "type": "string",
+            "_special": "select_provider",
             "default": ""
           }
         }
@@ -170,36 +171,42 @@
       },
       "duration_seconds": {
         "description": "总时长（秒）",
+        "hint": "0 表示不限",
         "type": "int",
         "default": 300
       },
       "max_replies": {
         "description": "最多回复条数",
-        "hint": "唤醒会话期间最多主动回复的次数",
+        "hint": "唤醒会话期间最多成功回复的次数，0 表示不限",
         "type": "int",
         "default": 5
       },
       "idle_timeout_seconds": {
         "description": "空闲超时（秒）",
+        "hint": "0 表示不限",
         "type": "int",
         "default": 120
       },
       "private": {
         "description": "私聊覆盖",
+        "hint": "留空继承全局；三项均 0 表示不限",
         "type": "object",
         "items": {
           "duration_seconds": {
             "description": "总时长",
+            "hint": "0 表示不限",
             "type": "int",
             "default": 300
           },
           "max_replies": {
             "description": "最多回复条数",
+            "hint": "0 表示不限",
             "type": "int",
             "default": 5
           },
           "idle_timeout_seconds": {
             "description": "空闲超时",
+            "hint": "0 表示不限",
             "type": "int",
             "default": 120
           }
@@ -207,21 +214,24 @@
       },
       "admin": {
         "description": "管理员覆盖",
-        "hint": "0 表示沿用默认值",
+        "hint": "管理员默认不限；0 表示不限",
         "type": "object",
         "items": {
           "duration_seconds": {
             "description": "总时长",
+            "hint": "0 表示不限",
             "type": "int",
             "default": 0
           },
           "max_replies": {
             "description": "最多回复条数",
+            "hint": "0 表示不限",
             "type": "int",
             "default": 0
           },
           "idle_timeout_seconds": {
             "description": "空闲超时",
+            "hint": "0 表示不限",
             "type": "int",
             "default": 0
           }
@@ -282,6 +292,7 @@
           "provider_id": {
             "description": "摘要 Provider ID，留空用当前",
             "type": "string",
+            "_special": "select_provider",
             "default": ""
           },
           "threshold": {

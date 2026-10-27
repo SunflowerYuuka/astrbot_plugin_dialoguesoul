@@ -37,8 +37,17 @@ DEFAULTS: dict[str, Any] = {
         "duration_seconds": 300,
         "max_replies": 5,
         "idle_timeout_seconds": 120,
-        "private": {},
-        "admin": {},
+        # 私聊默认与全局一致；管理员默认三项均为 0（不限）
+        "private": {
+            "duration_seconds": 300,
+            "max_replies": 5,
+            "idle_timeout_seconds": 120,
+        },
+        "admin": {
+            "duration_seconds": 0,
+            "max_replies": 0,
+            "idle_timeout_seconds": 0,
+        },
         "groups": [],
     },
     "context": {

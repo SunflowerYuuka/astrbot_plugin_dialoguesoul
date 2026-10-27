@@ -54,16 +54,54 @@ class ConfigTest(unittest.TestCase):
     def test_schema_defaults_match_config_defaults(self):
         schema = json.loads((ROOT / "_conf_schema.json").read_text("utf-8"))
         defaults = _astrbot_schema_to_defaults(schema)
-        # wake.private / wake.admin 是覆盖项，运行时默认留空表示「不覆盖」
-        for override in ("private", "admin"):
-            defaults["wake"][override] = cfg.DEFAULTS["wake"][override]
         self.assertEqual(defaults, cfg.DEFAULTS)
+
+    def test_wake_scope_defaults_are_explicit(self):
+        wake = cfg.DEFAULTS["wake"]
+        self.assertEqual(
+            wake["private"],
+            {"duration_seconds": 300, "max_replies": 5, "idle_timeout_seconds": 120},
+        )
+        self.assertEqual(
+            wake["admin"],
+            {"duration_seconds": 0, "max_replies": 0, "idle_timeout_seconds": 0},
+        )
+
+    def test_schema_and_defaults_agree_on_wake_scopes(self):
+        schema = json.loads((ROOT / "_conf_schema.json").read_text("utf-8"))
+        wake_schema = schema["wake"]["items"]
+        for scope in ("private", "admin"):
+            fields = wake_schema[scope]["items"]
+            mirrored = {
+                field: fields[field]["default"]
+                for field in ("duration_seconds", "max_replies", "idle_timeout_seconds")
+            }
+            self.assertEqual(mirrored, cfg.DEFAULTS["wake"][scope])
 
     def test_schema_wake_overrides_mirror_parent_values(self):
         schema = json.loads((ROOT / "_conf_schema.json").read_text("utf-8"))
         wake = schema["wake"]["items"]
         for field in ("duration_seconds", "max_replies", "idle_timeout_seconds"):
             self.assertEqual(wake["private"]["items"][field]["default"], wake[field]["default"])
+
+    def test_admin_zero_means_unlimited_wording(self):
+        schema = json.loads((ROOT / "_conf_schema.json").read_text("utf-8"))
+        wake = schema["wake"]["items"]
+        for field in ("duration_seconds", "max_replies", "idle_timeout_seconds"):
+            self.assertIn("0 表示不限", wake[field]["hint"])
+            self.assertIn("0 表示不限", wake["admin"]["items"][field]["hint"])
+        self.assertNotIn("沿用默认", json.dumps(schema, ensure_ascii=False))
+
+    def test_provider_fields_use_select_provider(self):
+        schema = json.loads((ROOT / "_conf_schema.json").read_text("utf-8"))
+        self.assertEqual(
+            schema["trigger"]["items"]["interest"]["items"]["provider_id"]["_special"],
+            "select_provider",
+        )
+        self.assertEqual(
+            schema["context"]["items"]["summary"]["items"]["provider_id"]["_special"],
+            "select_provider",
+        )
 
     def test_schema_enumerates_strategy_and_format(self):
         schema = json.loads((ROOT / "_conf_schema.json").read_text("utf-8"))
