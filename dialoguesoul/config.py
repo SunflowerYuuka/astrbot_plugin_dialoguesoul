@@ -11,6 +11,7 @@ DEFAULTS: dict[str, Any] = {
     "trigger": {
         "probability": 0.1,
         "strategy": "window",
+        "proactive_delay_seconds": 5,
         "window_seconds": 30,
         "interest": {"enabled": True, "provider_id": ""},
         "burst": {

@@ -5,7 +5,11 @@ import time
 import uuid
 
 from . import config as cfg
-from .context.components import exclude_current_message, user_message_from_event
+from .context.components import (
+    collect_image_urls,
+    exclude_current_message,
+    user_message_from_event,
+)
 from .context.live import (
     build_caption_service,
     build_forward_renderer,
@@ -44,6 +48,7 @@ class DialoguesSoulPlugin:
         self.summary_service = build_summary_service(context, config)
         self._locks = {}
         self._lock_seen = {}
+        self._delay_cancels = {}
 
     async def close(self):
         return None
@@ -62,6 +67,21 @@ class DialoguesSoulPlugin:
                 removed += 1
         return removed
 
+    async def _wait_window_images(self, key, since):
+        messages = await self.repo.recent(*key, history_limit(self.config, True))
+        urls = []
+        for message in messages:
+            if message.timestamp >= since:
+                urls.extend(collect_image_urls(message.components))
+        return urls
+
+    async def _wait_delay(self, cancel, delay):
+        try:
+            await asyncio.wait_for(cancel.wait(), timeout=delay)
+        except asyncio.TimeoutError:
+            return False
+        return True
+
     async def handle_message(self, event):
         self.wake.clear_expired()
         key = ChatKey.from_event(event).as_tuple()
@@ -76,6 +96,10 @@ class DialoguesSoulPlugin:
             lock = asyncio.Lock()
             self._locks[key] = lock
         direct = self.gate.is_direct_address(event)
+        if direct:
+            cancel = self._delay_cancels.get(key)
+            if cancel is not None:
+                cancel.set()
         if lock.locked() and not direct:
             return
         async with lock:
@@ -91,6 +115,23 @@ class DialoguesSoulPlugin:
             if route.kind == "ignore":
                 return
             decision = route.kind == "decision"
+            extra_image_urls = []
+            if decision and not direct:
+                delay = float(
+                    cfg.get(self.config, "trigger.proactive_delay_seconds", 5) or 0
+                )
+                if delay > 0:
+                    wait_started = time.time()
+                    cancel = asyncio.Event()
+                    self._delay_cancels[key] = cancel
+                    try:
+                        cancelled = await self._wait_delay(cancel, delay)
+                    finally:
+                        if self._delay_cancels.get(key) is cancel:
+                            self._delay_cancels.pop(key, None)
+                    if cancelled:
+                        return
+                    extra_image_urls = await self._wait_window_images(key, wait_started)
             starts_session = (
                 route.wake_session is None
                 and decision
@@ -113,6 +154,7 @@ class DialoguesSoulPlugin:
                 summary_service=self.summary_service,
                 wake_starts=starts_session,
                 wake_limits=limits,
+                extra_image_urls=extra_image_urls,
             )
             if route.wake_session is not None:
                 event.set_extra(

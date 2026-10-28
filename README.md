@@ -47,7 +47,7 @@
 | 配置段 | 主要作用 |
 |---|---|
 | `enabled` / `enable_all_groups` / `enabled_groups` / `blocked_groups` / `enabled_private` | 总开关与聊天范围。 |
-| `trigger` | 触发策略、窗口、概率、关键词、黑名单、忽略前缀与刷屏保护。 |
+| `trigger` | 触发策略、主动回复等待、窗口、概率、关键词、黑名单、忽略前缀与刷屏保护。 |
 | `decision` | 决策格式、最大回复条数、最低置信度、决策上下文条数、冷却与每分钟上限。 |
 | `wake` | 唤醒会话开关与限制，以及私聊、管理员和指定群覆盖。 |
 | `context` | 最近历史、图片转述、合并转发与上下文摘要。 |
@@ -68,6 +68,7 @@
 补充行为：
 
 - 直接 @ / 回复机器人的优先级高于触发策略，通常走普通请求；唤醒会话活跃时则进入唤醒决策。
+- `trigger.proactive_delay_seconds` 控制主动回复的等待时间，默认 5 秒。非直接 @ 的触发命中后固定等待该时间再调用模型，等待期间的新消息只入库，结束后连同上下文、触发消息图片和等待窗口内图片一起送入模型；直接 @ 不等待，并会打断正在等待的主动回复，`0` 表示关闭等待。
 - 唤醒会话活跃时，通过硬门控的消息直接进入决策，不受窗口或兴趣策略限制。
 - `trigger.burst` 可对指定群启用刷屏保护：30 秒内消息达到阈值后暂停自主采样，安静 `cooldown_seconds` 后恢复；直接 @ 仍可触发。`threshold` 与 `cooldown_seconds` 是全局配置，对所有启用了刷屏保护的群生效。
 - `trigger.probability` 与 `trigger.keywords` 仅在 `rules` 策略下参与触发判定；`trigger.blacklist_keywords`、`trigger.ignored_prefixes` 对所有策略生效。

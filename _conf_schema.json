@@ -48,6 +48,12 @@
         "labels": ["每条消息", "规则匹配", "时间窗口", "兴趣判断"],
         "default": "window"
       },
+      "proactive_delay_seconds": {
+        "description": "主动回复等待时间（秒）",
+        "hint": "非直接 @ 的触发命中后等待该时间再调用 LLM，期间新消息、上下文和图片会一并带上；0 表示不等待",
+        "type": "int",
+        "default": 5
+      },
       "window_seconds": {
         "description": "时间窗口（秒）",
         "hint": "仅「时间窗口」策略生效，窗口内的后续消息不再判断",

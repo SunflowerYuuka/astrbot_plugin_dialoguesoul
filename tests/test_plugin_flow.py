@@ -2,16 +2,19 @@ import asyncio
 import time
 import types
 import unittest
+from unittest.mock import patch
 
 from tests._helpers import (
     RequestLLMMixin,
     _At,
+    _Image,
     _Plain,
     install_astrbot_stub,
 )
 
 install_astrbot_stub()
 
+from dialoguesoul.models import ChatMessage
 from dialoguesoul.plugin import DialoguesSoulPlugin
 from dialoguesoul.wake import WakeLimits
 
@@ -22,6 +25,7 @@ def _base_config():
         "enable_all_groups": True,
         "trigger": {
             "strategy": "every_message",
+            "proactive_delay_seconds": 0,
             "probability": 0.0,
             "keywords": [],
             "blacklist_keywords": [],
@@ -51,6 +55,12 @@ class FakeRepo:
 
     async def append(self, message):
         self.appended.append(message)
+
+
+class GrowingRepo(FakeRepo):
+    async def append(self, message):
+        await super().append(message)
+        self.history.append(message)
 
 
 class BlockingRepo(FakeRepo):
@@ -136,6 +146,122 @@ class PluginFlowTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(event.call_llm)
         self.assertIsNone(event.request.func_tool)
         self.assertIn("tool_set", event.request_llm_kwargs)
+
+    async def test_proactive_delay_waits_and_merges_wait_window_images(self):
+        repo = GrowingRepo()
+        repo.history.append(
+            ChatMessage(
+                platform="p",
+                self_id="bot",
+                chat_type="group",
+                chat_id="1",
+                message_id="old",
+                sender_id="v",
+                sender_name="V",
+                timestamp=0,
+                components=[{"type": "image", "url": "http://old"}],
+            )
+        )
+        config = _base_config()
+        config["trigger"]["proactive_delay_seconds"] = 5
+        plugin = self._plugin(config=config, repo=repo)
+        event = FakeEvent(
+            "看图", "m1", components=[_Plain(text="看图"), _Image(url="http://now")]
+        )
+        waits = []
+
+        async def fake_wait(cancel, delay):
+            waits.append(delay)
+            await repo.append(
+                ChatMessage(
+                    platform="p",
+                    self_id="bot",
+                    chat_type="group",
+                    chat_id="1",
+                    message_id="m2",
+                    sender_id="v",
+                    sender_name="V",
+                    timestamp=time.time() + 0.01,
+                    components=[
+                        {"type": "plain", "text": "wait"},
+                        {"type": "image", "url": "http://wait"},
+                    ],
+                )
+            )
+            return False
+
+        with patch.object(plugin, "_wait_delay", fake_wait):
+            requests = await _collect(plugin, event)
+
+        self.assertEqual(waits, [5])
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].image_urls, ["http://now", "http://wait"])
+        self.assertIn("wait", requests[0].system_prompt)
+
+    async def test_direct_address_skips_proactive_delay(self):
+        config = _base_config()
+        config["trigger"]["proactive_delay_seconds"] = 5
+        plugin = self._plugin(config=config)
+        event = FakeEvent(
+            "hi", "m1", components=[_Plain(text="hi"), _At(qq="bot")]
+        )
+        waits = []
+
+        async def fake_wait(cancel, delay):
+            waits.append(delay)
+            return False
+
+        with patch.object(plugin, "_wait_delay", fake_wait):
+            requests = await _collect(plugin, event)
+
+        self.assertEqual(waits, [])
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(event.get_extra("ds_request_kind"), "normal")
+
+    async def test_direct_address_cancels_pending_proactive_delay(self):
+        config = _base_config()
+        config["trigger"]["proactive_delay_seconds"] = 5
+        plugin = self._plugin(config=config)
+        proactive = FakeEvent("proactive", "m1")
+        direct = FakeEvent(
+            "direct", "m2", components=[_Plain(text="direct"), _At(qq="bot")]
+        )
+
+        proactive_task = asyncio.create_task(_collect(plugin, proactive))
+        for _ in range(100):
+            if getattr(plugin, "_delay_cancels", {}):
+                break
+            await asyncio.sleep(0.001)
+
+        direct_task = asyncio.create_task(_collect(plugin, direct))
+        try:
+            proactive_requests, direct_requests = await asyncio.wait_for(
+                asyncio.gather(proactive_task, direct_task), 1
+            )
+        finally:
+            for task in (proactive_task, direct_task):
+                if not task.done():
+                    task.cancel()
+
+        self.assertEqual(proactive_requests, [])
+        self.assertEqual(len(direct_requests), 1)
+        self.assertEqual(direct.get_extra("ds_request_kind"), "normal")
+
+    async def test_proactive_delay_zero_skips_sleep(self):
+        plugin = self._plugin()
+        event = FakeEvent()
+        waits = []
+
+        async def fake_wait(cancel, delay):
+            waits.append(delay)
+            return False
+
+        with patch.object(plugin, "_wait_delay", fake_wait):
+            requests = await _collect(plugin, event)
+
+        self.assertEqual(waits, [])
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(event.get_extra("ds_request_kind"), "decision")
 
     async def test_successful_send_records_cooldown_for_next_candidate(self):
         config = _base_config()

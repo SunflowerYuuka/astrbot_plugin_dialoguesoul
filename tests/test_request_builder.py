@@ -274,6 +274,27 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("一只猫", built.request.prompt)
         self.assertEqual(built.request.image_urls, ["http://img"])
 
+    async def test_extra_image_urls_are_merged_and_captioned(self):
+        image = _Image(url="http://now")
+        caption = FakeCaption({"http://now": "当前图", "http://wait": "等待图"})
+        config = _base_config()
+        config["context"]["image_caption"]["enabled"] = True
+        event = FakeEvent([_Plain(text="看图"), image])
+
+        built = await self._build(
+            _builder(caption_service=caption),
+            event,
+            config,
+            extra_image_urls=["http://wait", "http://now"],
+        )
+
+        self.assertEqual(built.request.image_urls, ["http://now", "http://wait"])
+        self.assertEqual(
+            caption.calls, [(["http://now", "http://wait"], "p:group:1")]
+        )
+        self.assertIn("当前图", built.request.prompt)
+        self.assertIn("等待图", built.request.prompt)
+
     async def test_caption_is_optional(self):
         image = _Image(url="http://img")
         caption = FakeCaption()

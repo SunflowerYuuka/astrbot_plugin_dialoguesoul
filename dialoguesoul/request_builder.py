@@ -57,6 +57,7 @@ class RequestBuilder:
         summary_service=None,
         wake_starts: bool = False,
         wake_limits=None,
+        extra_image_urls=None,
     ) -> BuiltRequest:
         key = ChatKey.from_event(event)
         limit = history_limit(config, decision)
@@ -81,6 +82,11 @@ class RequestBuilder:
             if component.get("type") == "plain"
         ).strip()
         image_urls = collect_image_urls(components)
+        seen_urls = set(image_urls)
+        for url in extra_image_urls or []:
+            if url and url not in seen_urls:
+                image_urls.append(url)
+                seen_urls.add(url)
 
         segments = [current_text] if current_text else []
         caption = caption_service or self.caption_service
