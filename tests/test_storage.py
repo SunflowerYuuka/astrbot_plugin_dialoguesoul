@@ -137,6 +137,19 @@ class StorageTest(unittest.IsolatedAsyncioTestCase):
         await self.db.close()
         await self.db.close()
 
+    async def test_timestamp_index_exists_for_retention_cleanup(self):
+        rows = await self.db.fetchall("PRAGMA index_list(messages)")
+        names = {row["name"] for row in rows}
+        self.assertIn("idx_messages_timestamp", names)
+
+    async def test_closed_database_ignores_late_writes(self):
+        await self.db.close()
+
+        self.assertEqual(await self.repo.append(self._msg("late", 1.0)), None)
+        self.assertEqual(await self.repo.count("p", "bot", "group", "1"), 0)
+        self.assertEqual(await self.repo.recent("p", "bot", "group", "1", 5), [])
+        self.assertEqual(await self.repo.prune_before(10.0), 0)
+
 
 class _Event:
     def __init__(self, private_chat, sender_id="u1", group_id="g1"):

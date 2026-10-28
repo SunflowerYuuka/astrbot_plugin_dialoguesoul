@@ -7,7 +7,7 @@ from .dialoguesoul.plugin import DialoguesSoulPlugin
 from .dialoguesoul.storage.db import Database
 from .dialoguesoul.storage.history import SqliteHistoryRepository
 from .dialoguesoul.storage.legacy_import import import_legacy_history
-from .dialoguesoul.storage.paths import resolve_db_path
+from .dialoguesoul.storage.paths import legacy_history_path, resolve_db_path
 
 
 @register(
@@ -26,11 +26,19 @@ class DialoguesSoul(Star):
         self.db = Database(db_path)
         self.repo = SqliteHistoryRepository(self.db)
         self.core = DialoguesSoulPlugin(context, config, self.repo)
-        self.commands = Commands(self.repo, config)
+        self.commands = Commands(
+            self.repo,
+            config,
+            gate=self.core.gate,
+            wake=self.core.wake,
+            cancel=self.core.cancel_pending,
+        )
 
     async def initialize(self):
         await self.db.initialize()
-        await import_legacy_history(self.db, self.repo, "data/chat_history", logger)
+        await import_legacy_history(
+            self.db, self.repo, legacy_history_path(), logger
+        )
 
     async def terminate(self):
         await self.core.close()

@@ -22,7 +22,7 @@ DEFAULTS: dict[str, Any] = {
         },
         "keywords": [],
         "blacklist_keywords": [],
-        "ignored_prefixes": [],
+        "ignored_prefixes": ["/"],
     },
     "decision": {
         "format": "marker",
@@ -31,6 +31,7 @@ DEFAULTS: dict[str, Any] = {
         "max_context_messages": 20,
         "cooldown_ms": 3000,
         "max_replies_per_minute": 6,
+        "aux_timeout_seconds": 15,
     },
     "wake": {
         "enabled": False,
@@ -90,24 +91,6 @@ def get(config: Any, path: str, default=None):
 
 def chat_key_id(key) -> str:
     return "|".join(str(part) for part in key.as_tuple())
-
-
-def _until(value) -> float:
-    try:
-        return float(value or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def mute_until(config, key) -> float:
-    mute = config.get("_temp_mute", {}) or {}
-    if not isinstance(mute, dict):
-        return 0.0
-    until = _until(mute.get("until", 0))
-    entry = mute.get(chat_key_id(key))
-    if isinstance(entry, dict):
-        until = max(until, _until(entry.get("until", 0)))
-    return until
 
 
 def chat_enabled(event, config) -> bool:

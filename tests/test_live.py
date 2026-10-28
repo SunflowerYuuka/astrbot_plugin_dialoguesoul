@@ -1,3 +1,4 @@
+import asyncio
 import types
 import unittest
 
@@ -26,6 +27,12 @@ class Provider:
 class FailingProvider:
     async def text_chat(self, **kwargs):
         raise RuntimeError("provider down")
+
+
+class SlowProvider:
+    async def text_chat(self, **kwargs):
+        await asyncio.sleep(5)
+        return types.SimpleNamespace(completion_text="YES")
 
 
 class Context:
@@ -209,6 +216,21 @@ class LiveServiceTest(unittest.IsolatedAsyncioTestCase):
                 "text": "只回复技术问题",
                 "provider_id": "judge",
             }
+        }
+        event = types.SimpleNamespace(
+            unified_msg_origin="umo",
+            get_message_outline=lambda: "当前消息",
+        )
+
+        judge = build_intervention_judge(context, config)
+
+        self.assertFalse(await judge(event, "最近聊天"))
+
+    async def test_intervention_judge_times_out_and_degrades(self):
+        context = Context(current=SlowProvider())
+        config = {
+            "decision": {"aux_timeout_seconds": 0.01},
+            "extra_prompt": {"enabled": True, "text": "只回复技术问题"},
         }
         event = types.SimpleNamespace(
             unified_msg_origin="umo",

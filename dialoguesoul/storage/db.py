@@ -27,6 +27,8 @@ class Database:
 
     async def execute(self, sql, params=()):
         async with self._lock:
+            if self._closed:
+                return 0
             return await asyncio.to_thread(self._execute_sync, sql, params)
 
     def _execute_sync(self, sql, params):
@@ -36,12 +38,16 @@ class Database:
 
     async def fetchall(self, sql, params=()):
         async with self._lock:
+            if self._closed:
+                return []
             return await asyncio.to_thread(
                 lambda: [dict(row) for row in self._conn.execute(sql, params).fetchall()]
             )
 
     async def fetchone(self, sql, params=()):
         async with self._lock:
+            if self._closed:
+                return None
             return await asyncio.to_thread(
                 lambda: (
                     dict(row) if (row := self._conn.execute(sql, params).fetchone()) else None

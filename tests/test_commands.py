@@ -54,6 +54,33 @@ class Config(dict):
         self.saved += 1
 
 
+class Gate:
+    def __init__(self):
+        self.muted_keys = {}
+
+    def mute(self, key, until):
+        self.muted_keys[tuple(key)] = until
+
+    def unmute(self, key):
+        self.muted_keys.pop(tuple(key), None)
+
+    def muted(self, key, now):
+        until = self.muted_keys.get(tuple(key))
+        return until is not None and until > now
+
+
+class Wake:
+    def __init__(self):
+        self.cleared = []
+
+    def clear_chat(self, key):
+        self.cleared.append(tuple(key))
+        return True
+
+    def is_active(self, key):
+        return False
+
+
 def _message(text="hi"):
     return ChatMessage("p", "bot", "group", "1", "m1", "u", "U", 1.0, [{"type": "plain", "text": text}])
 
@@ -84,40 +111,74 @@ class CommandsTest(unittest.IsolatedAsyncioTestCase):
             [("p", "bot", "group", "1"), ("p", "bot", "group", "99")],
         )
 
-    async def test_mute_is_per_chat_and_saves_config(self):
-        config = Config()
-        commands = Commands(Repo(), config)
+    async def test_mute_is_kept_in_memory_and_cancels_pending(self):
+        gate = Gate()
+        cancelled = []
+        commands = Commands(Repo(), Config(), gate=gate, cancel=cancelled.append)
         event = Event()
 
         with mock.patch("dialoguesoul.commands.time.time", return_value=1000.0):
             result = await commands.mute(event, 5)
 
-        key = cfg.chat_key_id(ChatKey.from_event(event))
+        key = ChatKey.from_event(event).as_tuple()
         self.assertEqual(result, "已静音 5 分钟")
-        self.assertEqual(config["_temp_mute"][key], {"until": 1300.0})
-        self.assertEqual(config.saved, 1)
+        self.assertEqual(gate.muted_keys[key], 1300.0)
+        self.assertEqual(cancelled, [key])
+
+    async def test_mute_rejects_invalid_minutes(self):
+        gate = Gate()
+        commands = Commands(Repo(), Config(), gate=gate)
+
+        with mock.patch("dialoguesoul.commands.time.time", return_value=1000.0):
+            self.assertEqual(await commands.mute(Event(), -1), "已静音 1 分钟")
+            self.assertEqual(await commands.mute(Event(), "bad"), "已静音 5 分钟")
+
+        key = ChatKey.from_event(Event()).as_tuple()
+        self.assertEqual(gate.muted_keys[key], 1300.0)
 
     async def test_unmute_only_clears_current_chat(self):
-        config = Config()
-        commands = Commands(Repo(), config)
-        current = cfg.chat_key_id(ChatKey.from_event(Event()))
-        other = cfg.chat_key_id(ChatKey.from_event(Event("2")))
-        config["_temp_mute"] = {
-            current: {"until": 9999.0},
-            other: {"until": 9999.0},
-            "until": 9999.0,
-        }
+        gate = Gate()
+        commands = Commands(Repo(), Config(), gate=gate)
+        current = ChatKey.from_event(Event()).as_tuple()
+        other = ChatKey.from_event(Event("2")).as_tuple()
+        gate.mute(current, 9999.0)
+        gate.mute(other, 9999.0)
 
         await commands.unmute(Event())
 
-        self.assertNotIn(current, config["_temp_mute"])
-        self.assertIn(other, config["_temp_mute"])
-        self.assertEqual(config["_temp_mute"]["until"], 9999.0)
-        self.assertEqual(config.saved, 1)
+        self.assertNotIn(current, gate.muted_keys)
+        self.assertIn(other, gate.muted_keys)
+
+    async def test_reset_clears_wake_session_and_pending(self):
+        wake = Wake()
+        cancelled = []
+        commands = Commands(
+            Repo(), Config(), wake=wake, cancel=cancelled.append
+        )
+
+        await commands.reset(Event())
+
+        key = ChatKey.from_event(Event()).as_tuple()
+        self.assertEqual(wake.cleared, [key])
+        self.assertEqual(cancelled, [key])
+
+    async def test_status_reports_real_state(self):
+        gate = Gate()
+        config = Config(
+            {"enabled": True, "trigger": {"strategy": "rules"}, "wake": {"enabled": True}}
+        )
+        commands = Commands(Repo(), config, gate=gate, wake=Wake())
+
+        result = await commands.status(Event())
+
+        self.assertIn("已启用", result)
+        self.assertIn("rules", result)
+        self.assertIn("唤醒会话：开启", result)
+        self.assertIn("正常", result)
 
     async def test_status_and_help(self):
         commands = Commands(Repo(), Config())
-        self.assertEqual(await commands.status(Event()), "DialoguesSoul 已运行")
+        self.assertIn("DialoguesSoul", await commands.status(Event()))
         self.assertIn("/ds", await commands.help(Event()))
 
 

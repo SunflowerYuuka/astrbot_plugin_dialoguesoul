@@ -6,10 +6,19 @@ import time
 from dataclasses import dataclass
 
 from . import config as cfg
+from .context.components import collect_text
 from .models import ChatKey
 
 _QUESTION = re.compile(r"[?？]|^(吗|呢|怎么|为什么|如何|什么|谁|哪|几|多少|是不是|能不能|可不可以)")
 _RATE_WINDOW = 60.0
+
+
+def plain_text(event) -> str:
+    """去掉 At/Reply 等非文本段后的可见文本。"""
+    components = getattr(getattr(event, "message_obj", None), "message", None) or []
+    if components:
+        return collect_text(components).strip()
+    return (event.get_message_outline() or "").strip()
 
 
 @dataclass(frozen=True)
@@ -31,12 +40,29 @@ class Gate:
         self._last_reply: dict[tuple, float] = {}
         self._reply_times: dict[tuple, list[float]] = {}
         self._seen: dict[str, float] = {}
+        self._mutes: dict[tuple, float] = {}
         self._seen_ttl = 300.0
 
     def reset(self):
         self._last_reply.clear()
         self._reply_times.clear()
         self._seen.clear()
+        self._mutes.clear()
+
+    def mute(self, key, until: float) -> None:
+        self._mutes[tuple(key)] = float(until)
+
+    def unmute(self, key) -> None:
+        self._mutes.pop(tuple(key), None)
+
+    def muted(self, key, now: float) -> bool:
+        until = self._mutes.get(tuple(key))
+        if until is None:
+            return False
+        if until <= now:
+            self._mutes.pop(tuple(key), None)
+            return False
+        return True
 
     @staticmethod
     def is_direct_address(event) -> bool:
@@ -67,14 +93,14 @@ class Gate:
         key = ChatKey.from_event(event)
         if not cfg.chat_enabled(event, config):
             return GateResult("skip", "chat_disabled")
-        if cfg.mute_until(config, key) > now:
+        if self.muted(key.as_tuple(), now):
             return GateResult("skip", "muted")
         direct = self.is_direct_address(event)
         text = (event.get_message_outline() or "").strip()
         if not text and not direct:
             return GateResult("skip", "empty")
         prefixes = cfg.get(config, "trigger.ignored_prefixes", []) or []
-        stripped = text.lstrip()
+        stripped = plain_text(event).lstrip()
         if any(prefix and stripped.startswith(prefix) for prefix in prefixes):
             return GateResult("skip", "command_prefix")
         if str(event.get_sender_id()) == str(event.get_self_id()):
@@ -106,7 +132,7 @@ class Gate:
         hard = self.hard_check(event, config, now)
         if hard is not None:
             return hard
-        text = (event.get_message_outline() or "").strip()
+        text = plain_text(event)
         if self.is_direct_address(event):
             return GateResult("candidate", "mentioned", "mention", 2)
         keywords = cfg.get(config, "trigger.keywords", []) or []

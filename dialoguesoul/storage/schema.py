@@ -17,5 +17,9 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_messages_chat_time
       ON messages(platform, self_id, chat_type, chat_id, timestamp)
     """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_messages_timestamp
+      ON messages(timestamp)
+    """,
     "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
 ]

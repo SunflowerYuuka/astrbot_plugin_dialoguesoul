@@ -5,9 +5,12 @@ from ..models import ChatMessage
 
 
 def build_environment(event) -> str:
-    who = "私聊对象" if event.is_private_chat() else f"群聊 {event.get_group_id()}"
+    if event.is_private_chat():
+        who = f"正在与用户 {event.get_sender_id()} 私聊"
+    else:
+        who = f"正在群聊 {event.get_group_id()} 中"
     return (
-        f"你在聊天软件上的 id 是 {event.get_self_id()}，正在{who}中。"
+        f"你在聊天软件上的 id 是 {event.get_self_id()}，{who}。"
         "你不是客服，不需要回复所有消息。"
     )
 

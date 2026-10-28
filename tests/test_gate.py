@@ -1,12 +1,12 @@
 import types
 import unittest
 
-from tests._helpers import _At, install_astrbot_stub
+from tests._helpers import _At, _Plain, _Reply, install_astrbot_stub
 
 install_astrbot_stub()
 
 from dialoguesoul import config as cfg
-from dialoguesoul.gate import Gate
+from dialoguesoul.gate import Gate, plain_text
 from dialoguesoul.models import ChatKey
 
 
@@ -67,6 +67,35 @@ class HardCheckTest(unittest.TestCase):
         result = self.gate.hard_check(E("/help"), config())
         self.assertEqual((result.action, result.reason), ("skip", "command_prefix"))
 
+    def test_hard_check_skips_command_after_at_prefix(self):
+        event = E(
+            "@bot /ds help",
+            components=[_At(qq="bot"), _Plain(text="/ds help")],
+        )
+        result = self.gate.hard_check(event, config())
+        self.assertEqual((result.action, result.reason), ("skip", "command_prefix"))
+
+    def test_default_config_ignores_slash_prefix(self):
+        data = config()
+        data["trigger"]["ignored_prefixes"] = cfg.DEFAULTS["trigger"]["ignored_prefixes"]
+        self.assertEqual(
+            self.gate.hard_check(E("/ds help"), data).reason, "command_prefix"
+        )
+
+    def test_plain_text_excludes_at_and_reply_segments(self):
+        event = E(
+            "@bot 你好",
+            components=[
+                _At(qq="bot"),
+                _Reply(id="m0", sender_id="bot"),
+                _Plain(text="你好"),
+            ],
+        )
+        self.assertEqual(plain_text(event), "你好")
+
+    def test_plain_text_falls_back_to_outline_without_components(self):
+        self.assertEqual(plain_text(E("hi")), "hi")
+
     def test_hard_check_skips_blacklist(self):
         result = self.gate.hard_check(E("别拉黑我"), config())
         self.assertEqual((result.action, result.reason), ("skip", "blacklist_keyword"))
@@ -102,13 +131,14 @@ class HardCheckTest(unittest.TestCase):
 
     def test_hard_check_skips_muted_chat(self):
         data = config()
-        data["_temp_mute"] = {"until": 2000.0}
+        key = ChatKey.from_event(E("触发"))
+        self.gate.mute(key.as_tuple(), 2000.0)
         self.assertEqual(self.gate.hard_check(E("触发"), data, now=1000.0).reason, "muted")
 
     def test_hard_check_skips_only_muted_chat(self):
         data = config()
         muted_key = ChatKey.from_event(E("触发", message_id="m1"))
-        data["_temp_mute"] = {cfg.chat_key_id(muted_key): {"until": 2000.0}}
+        self.gate.mute(muted_key.as_tuple(), 2000.0)
         self.assertEqual(
             self.gate.hard_check(E("触发", message_id="m1"), data, now=1000.0).reason,
             "muted",
@@ -116,6 +146,17 @@ class HardCheckTest(unittest.TestCase):
         other = E("触发", message_id="m2")
         other.get_group_id = lambda: "2"
         self.assertIsNone(self.gate.hard_check(other, data, now=1000.0))
+
+    def test_mute_expires_and_unmute_clears(self):
+        data = config()
+        key = ChatKey.from_event(E("触发"))
+        self.gate.mute(key.as_tuple(), 2000.0)
+        self.assertFalse(self.gate.muted(key.as_tuple(), 2001.0))
+        self.assertIsNone(self.gate.hard_check(E("触发"), data, now=2001.0))
+
+        self.gate.mute(key.as_tuple(), 3000.0)
+        self.gate.unmute(key.as_tuple())
+        self.assertFalse(self.gate.muted(key.as_tuple(), 2001.0))
 
     def test_hard_check_skips_empty_without_direct(self):
         result = self.gate.hard_check(E(""), config())

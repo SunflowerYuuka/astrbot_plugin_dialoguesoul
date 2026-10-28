@@ -14,9 +14,12 @@ _ids = itertools.count(1)
 
 
 class E:
-    def __init__(self, text="hi", group="1", components=None, message_id=None):
+    def __init__(
+        self, text="hi", group="1", components=None, message_id=None, private=False
+    ):
         self.text = text
         self.group = group
+        self.private = private
         self.message_obj = types.SimpleNamespace(
             message=components or [],
             message_id=message_id or f"m{next(_ids)}",
@@ -35,7 +38,7 @@ class E:
         return self.group
 
     def is_private_chat(self):
-        return False
+        return self.private
 
     def get_message_outline(self):
         return self.text
@@ -45,6 +48,7 @@ def config(strategy, trigger=None, **extra):
     base = {
         "enabled": True,
         "enable_all_groups": True,
+        "enabled_private": True,
         "trigger": {
             "strategy": strategy,
             "window_seconds": 30,
@@ -125,6 +129,60 @@ class StrategyTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.kind, "decision")
         self.assertEqual(called, [])
+
+    async def test_private_chat_uses_normal_route(self):
+        engine = StrategyEngine(Gate(), WakeManager())
+
+        result = await engine.route(E("随便聊聊", private=True), config("rules"))
+
+        self.assertEqual(result.kind, "normal")
+
+    async def test_private_chat_still_uses_active_wake_session(self):
+        wake = WakeManager()
+        key = ("p", "bot", "private", "u")
+        limits = WakeLimits(300, 5, 120)
+        wake.reserve(key, limits, "s1", now=100)
+        wake.record_delivery(key, limits, "s1", starts_session=True, now=100)
+        engine = StrategyEngine(Gate(), wake)
+
+        result = await engine.route(
+            E("继续聊", private=True),
+            config("rules", wake={"enabled": True}),
+            now=110,
+        )
+
+        self.assertEqual(result.kind, "decision")
+
+    async def test_burst_protection_pauses_wake_sessions(self):
+        wake = WakeManager()
+        key = ("p", "bot", "group", "1")
+        limits = WakeLimits(300, 5, 120)
+        wake.reserve(key, limits, "s1", now=100)
+        wake.record_delivery(key, limits, "s1", starts_session=True, now=100)
+        engine = StrategyEngine(Gate(), wake)
+        data = config(
+            "every_message",
+            trigger={
+                "strategy": "every_message",
+                "window_seconds": 30,
+                "probability": 0.0,
+                "keywords": [],
+                "blacklist_keywords": [],
+                "ignored_prefixes": [],
+                "burst": {
+                    "enabled": True,
+                    "groups": ["1"],
+                    "threshold": 2,
+                    "cooldown_seconds": 30,
+                },
+            },
+        )
+
+        first = await engine.route(E("a"), data, now=110)
+        second = await engine.route(E("b"), data, now=111)
+
+        self.assertEqual(first.kind, "decision")
+        self.assertEqual(second.kind, "ignore")
 
     async def test_missing_interest_judge_ignores(self):
         engine = StrategyEngine(Gate(), WakeManager())

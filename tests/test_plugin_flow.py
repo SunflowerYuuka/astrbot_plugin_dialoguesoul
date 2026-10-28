@@ -90,8 +90,11 @@ class BlockingRepo(FakeRepo):
 
 
 class FakeEvent(RequestLLMMixin):
-    def __init__(self, text="hello", message_id="m1", components=None):
-        self.unified_msg_origin = "p:group:1"
+    def __init__(
+        self, text="hello", message_id="m1", components=None, private=False
+    ):
+        self.private = private
+        self.unified_msg_origin = "p:private:u" if private else "p:group:1"
         self.message_obj = types.SimpleNamespace(
             message=list(components)
             if components is not None
@@ -111,7 +114,7 @@ class FakeEvent(RequestLLMMixin):
         return "bot"
 
     def get_group_id(self):
-        return "1"
+        return None if self.private else "1"
 
     def get_sender_id(self):
         return "u"
@@ -120,7 +123,7 @@ class FakeEvent(RequestLLMMixin):
         return "U"
 
     def is_private_chat(self):
-        return False
+        return self.private
 
     def get_message_outline(self):
         return self.text
@@ -349,6 +352,64 @@ class PluginFlowTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(requests, [])
         self.assertEqual(len(judge.calls), 1)
         self.assertIn("wait-context", judge.calls[0][1])
+
+    async def test_private_chat_replies_immediately_without_decision_protocol(self):
+        config = _base_config()
+        config["enabled_private"] = True
+        config["trigger"]["proactive_delay_seconds"] = 5
+        config["trigger"]["strategy"] = "rules"
+        plugin = self._plugin(config=config)
+        event = FakeEvent(private=True)
+        waits = []
+
+        async def fake_wait(cancel, delay):
+            waits.append(delay)
+            return False
+
+        with patch.object(plugin, "_wait_delay", fake_wait):
+            requests = await _collect(plugin, event)
+
+        self.assertEqual(waits, [])
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(event.get_extra("ds_request_kind"), "normal")
+        self.assertNotIn("[参与判断]", requests[0].system_prompt)
+
+    async def test_private_chat_normal_reply_starts_wake_session(self):
+        config = _base_config()
+        config["enabled_private"] = True
+        config["wake"] = {"enabled": True}
+        plugin = self._plugin(config=config)
+        event = FakeEvent(private=True)
+
+        requests = await _collect(plugin, event)
+
+        self.assertEqual(len(requests), 1)
+        wake_meta = event.get_extra("ds_wake")
+        self.assertTrue(wake_meta["starts_session"])
+        self.assertIsNotNone(wake_meta["limits"])
+
+    async def test_cancel_pending_interrupts_delay(self):
+        config = _base_config()
+        config["trigger"]["proactive_delay_seconds"] = 5
+        plugin = self._plugin(config=config)
+        event = FakeEvent()
+        key = ("p", "bot", "group", "1")
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def fake_wait(cancel, delay):
+            started.set()
+            await release.wait()
+            return cancel.is_set()
+
+        with patch.object(plugin, "_wait_delay", fake_wait):
+            task = asyncio.create_task(_collect(plugin, event))
+            await asyncio.wait_for(started.wait(), 1)
+            self.assertTrue(plugin.cancel_pending(key))
+            release.set()
+            requests = await asyncio.wait_for(task, 1)
+
+        self.assertEqual(requests, [])
 
     async def test_direct_address_skips_intervention_judge(self):
         config = _base_config()

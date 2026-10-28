@@ -90,7 +90,23 @@ class ContextTest(unittest.TestCase):
             get_sender_name=lambda: "U",
             get_sender_id=lambda: "u",
         )
-        self.assertIn("bot", build_environment(event))
+        text = build_environment(event)
+        self.assertIn("bot", text)
+        self.assertIn("群聊 1", text)
+        self.assertNotIn("正在群聊 1 中中", text)
+
+    def test_environment_for_private_chat(self):
+        event = types.SimpleNamespace(
+            get_self_id=lambda: "bot",
+            get_platform_name=lambda: "p",
+            is_private_chat=lambda: True,
+            get_group_id=lambda: None,
+            get_sender_name=lambda: "U",
+            get_sender_id=lambda: "u",
+        )
+        text = build_environment(event)
+        self.assertIn("与用户 u 私聊", text)
+        self.assertNotIn("私聊对象中", text)
 
 
 class PersonaTest(unittest.IsolatedAsyncioTestCase):

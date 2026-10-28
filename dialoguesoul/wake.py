@@ -119,6 +119,12 @@ class WakeManager:
     def is_active(self, key, now: float | None = None) -> bool:
         return self.get(key, now) is not None
 
+    def clear_chat(self, key) -> bool:
+        """立即结束该聊天的唤醒会话与预留。"""
+        removed = self._sessions.pop(tuple(key), None) is not None
+        self._reserved.pop(tuple(key), None)
+        return removed
+
     def reserve(self, key, limits, session_id, now: float | None = None):
         now = time.time() if now is None else now
         self._prune_reservations(now)

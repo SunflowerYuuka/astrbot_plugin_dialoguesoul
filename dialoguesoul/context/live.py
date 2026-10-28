@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 
 from .. import config as cfg
@@ -7,6 +8,19 @@ from ..interest import InterestJudge
 from .forwards import ForwardRenderer, fetch_forward_payload
 from .images import CaptionService
 from .summary import SummaryService
+
+
+def aux_timeout(config) -> float:
+    try:
+        return float(cfg.get(config, "decision.aux_timeout_seconds", 15) or 0)
+    except (TypeError, ValueError):
+        return 15.0
+
+
+async def _call_with_timeout(call, timeout: float):
+    if timeout > 0:
+        return await asyncio.wait_for(call, timeout=timeout)
+    return await call
 
 
 async def _provider(context, umo: str, provider_id: str):
@@ -30,11 +44,14 @@ def build_caption_service(context, config):
         )
         if provider is None:
             return ""
-        response = await provider.text_chat(
-            prompt=cfg.get(
-                config, "context.image_caption.prompt", "请直接简短描述这张图片"
+        response = await _call_with_timeout(
+            provider.text_chat(
+                prompt=cfg.get(
+                    config, "context.image_caption.prompt", "请直接简短描述这张图片"
+                ),
+                image_urls=[url],
             ),
-            image_urls=[url],
+            aux_timeout(config),
         )
         return (getattr(response, "completion_text", "") or "").strip()
 
@@ -71,9 +88,13 @@ def build_summary_service(context, config):
         )
         if provider is None:
             return fallback
-        response = await provider.text_chat(
-            prompt="请把以下群聊记录压缩成简要摘要，保留人物、话题和结论：\n" + fallback,
-            system_prompt="只输出摘要正文。",
+        response = await _call_with_timeout(
+            provider.text_chat(
+                prompt="请把以下群聊记录压缩成简要摘要，保留人物、话题和结论：\n"
+                + fallback,
+                system_prompt="只输出摘要正文。",
+            ),
+            aux_timeout(config),
         )
         return (getattr(response, "completion_text", "") or "").strip() or fallback
 
@@ -102,7 +123,7 @@ def build_intervention_judge(context, config):
             cfg.get(config, "extra_prompt.provider_id", ""),
         )
 
-    return InterestJudge(resolver, prompt)
+    return InterestJudge(resolver, prompt, timeout=aux_timeout(config))
 
 
 def build_interest_judge(context, config):
@@ -119,5 +140,7 @@ def build_interest_judge(context, config):
         )
 
     return InterestJudge(
-        resolver, "判断这条群聊消息是否值得你像群友一样接话。只输出 YES 或 NO。"
+        resolver,
+        "判断这条群聊消息是否值得你像群友一样接话。只输出 YES 或 NO。",
+        timeout=aux_timeout(config),
     )

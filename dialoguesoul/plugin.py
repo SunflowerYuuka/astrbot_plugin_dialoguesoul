@@ -84,6 +84,14 @@ class DialoguesSoulPlugin:
             return False
         return True
 
+    def cancel_pending(self, key) -> bool:
+        """打断该聊天正在等待的主动回复。"""
+        cancel = self._delay_cancels.get(tuple(key))
+        if cancel is None:
+            return False
+        cancel.set()
+        return True
+
     async def handle_message(self, event):
         self.wake.clear_expired()
         key = ChatKey.from_event(event).as_tuple()
@@ -147,8 +155,8 @@ class DialoguesSoulPlugin:
                     return
             starts_session = (
                 route.wake_session is None
-                and decision
                 and cfg.get(self.config, "wake.enabled", False)
+                and (decision or event.is_private_chat())
             )
             session_id = uuid.uuid4().hex if starts_session else ""
             limits = (

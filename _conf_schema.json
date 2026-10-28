@@ -123,9 +123,10 @@
       },
       "ignored_prefixes": {
         "description": "忽略的指令前缀",
+        "hint": "默认忽略 AstrBot 唤醒前缀「/」，避免指令消息额外触发一次模型回复；自定义唤醒前缀时请同步添加",
         "type": "list",
         "items": { "type": "string" },
-        "default": []
+        "default": ["/"]
       }
     }
   },
@@ -165,6 +166,12 @@
         "description": "每分钟上限",
         "type": "int",
         "default": 6
+      },
+      "aux_timeout_seconds": {
+        "description": "辅助模型超时（秒）",
+        "hint": "兴趣判断、介入判断、图片转述与摘要等辅助调用共用；超时按未通过处理，0 表示不限",
+        "type": "int",
+        "default": 15
       }
     }
   },
@@ -311,6 +318,7 @@
           },
           "threshold": {
             "description": "触发摘要的历史条数",
+            "hint": "需不大于实际读取的历史条数（decision.max_context_messages 或 context.history_limit），否则摘要不会触发",
             "type": "int",
             "default": 20
           }

@@ -78,11 +78,13 @@ class StrategyEngine:
             session = self.wake.get(key, now)
         if session is not None:
             hard = self.gate.hard_check(event, config, now)
-            if hard is None:
-                return RouteDecision("decision", None, session)
-            return RouteDecision("ignore", hard)
+            if hard is not None:
+                return RouteDecision("ignore", hard)
+            if not direct and self.burst.is_bursting(key, config, now):
+                return RouteDecision("ignore")
+            return RouteDecision("decision", None, session)
 
-        if direct:
+        if direct or event.is_private_chat():
             hard = self.gate.hard_check(event, config, now)
             if hard is None:
                 return RouteDecision("normal")
