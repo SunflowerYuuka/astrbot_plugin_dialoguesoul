@@ -14,6 +14,7 @@ from .context.live import (
     build_caption_service,
     build_forward_renderer,
     build_interest_judge,
+    build_intervention_judge,
     build_summary_service,
 )
 from .context.persona import resolve_persona_prompt
@@ -38,6 +39,7 @@ class DialoguesSoulPlugin:
             self.wake,
             interest_judge=build_interest_judge(context, config),
         )
+        self.intervention_judge = build_intervention_judge(context, config)
         self.hooks = Hooks(repo, self.wake, config, gate=self.gate)
         self.builder = RequestBuilder(
             repo=repo,
@@ -132,6 +134,17 @@ class DialoguesSoulPlugin:
                     if cancelled:
                         return
                     extra_image_urls = await self._wait_window_images(key, wait_started)
+            intervention = (
+                decision and not direct and self.intervention_judge is not None
+            )
+            if intervention:
+                gate_history = exclude_current_message(
+                    await self.repo.recent(*key, limit), event
+                )
+                if not await self.intervention_judge(
+                    event, format_history(gate_history)
+                ):
+                    return
             starts_session = (
                 route.wake_session is None
                 and decision
@@ -155,6 +168,7 @@ class DialoguesSoulPlugin:
                 wake_starts=starts_session,
                 wake_limits=limits,
                 extra_image_urls=extra_image_urls,
+                proactive_reply=intervention,
             )
             if route.wake_session is not None:
                 event.set_extra(

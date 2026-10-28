@@ -402,12 +402,21 @@
     "type": "object",
     "items": {
       "enabled": {
-        "description": "启用附加提示词",
+        "description": "启用附加提示词 / 介入判断",
+        "hint": "开启后，主动触发和唤醒会先判断是否介入；判断依据以提示词内容为主",
         "type": "bool",
         "default": false
       },
+      "provider_id": {
+        "description": "介入判断 Provider ID，留空用当前",
+        "hint": "开启附加提示词后，主动触发和唤醒会先用该模型判断是否介入",
+        "type": "string",
+        "_special": "select_provider",
+        "default": ""
+      },
       "text": {
         "description": "附加提示词内容",
+        "hint": "开启后作为介入判断的主要依据，并注入主模型",
         "type": "text",
         "default": ""
       }

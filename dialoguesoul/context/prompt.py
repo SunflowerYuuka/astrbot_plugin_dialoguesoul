@@ -34,6 +34,7 @@ def build_system_prompt(
     decision: bool,
     decision_format: str = "json",
     wake_hint: str = "",
+    reply_instruction: str = "",
 ) -> str:
     parts = [persona.strip(), environment.strip()]
     if history.strip():
@@ -42,7 +43,9 @@ def build_system_prompt(
         parts.append("[附加提示词]\n" + extra.strip())
     if wake_hint.strip():
         parts.append("[唤醒收尾提示]\n" + wake_hint.strip())
-    if decision:
+    if reply_instruction.strip():
+        parts.append(reply_instruction.strip())
+    elif decision:
         instruction = (
             build_marker_instruction()
             if decision_format == "marker"

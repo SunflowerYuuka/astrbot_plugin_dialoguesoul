@@ -40,6 +40,51 @@ def build_marker_instruction() -> str:
     )
 
 
+def build_reply_instruction(reply_format: str = "plain") -> str:
+    if reply_format == "json":
+        return (
+            "\n\n[回复格式]\n"
+            "你已经决定介入这场对话。只输出严格 JSON，不要 Markdown，不要解释。\n"
+            '格式：{"messages":["..."],"quote":可选历史消息编号}\n'
+            "quote 省略表示不引用。\n"
+        )
+    return (
+        "\n\n[回复要求]\n"
+        "你已经决定介入这场对话。直接输出要发送的内容，不要解释，不要使用结构化格式。\n"
+    )
+
+
+def parse_reply(text: str, max_messages: int) -> Decision:
+    try:
+        raw = (text or "").strip()
+        match = _FENCE.match(raw)
+        if match:
+            raw = match.group(1).strip()
+        start, end = raw.find("{"), raw.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError("no json")
+        data = json.loads(raw[start:end + 1])
+        messages = data.get("messages", [])
+        if not isinstance(messages, list):
+            raise ValueError("bad messages")
+        cleaned = [
+            m.strip() for m in messages if isinstance(m, str) and m.strip()
+        ][: max(0, max_messages)]
+        if not cleaned:
+            return Decision("ignore", "empty", [], 0.0, None)
+        quote = data.get("quote")
+        if quote is not None:
+            try:
+                quote = int(quote)
+            except (TypeError, ValueError):
+                quote = None
+            if quote is not None and quote <= 0:
+                quote = None
+        return Decision("reply", "reply", cleaned, 1.0, quote)
+    except Exception:
+        return Decision("ignore", "parse_failed", [], 0.0, None)
+
+
 def parse_decision(text: str, max_messages: int, min_confidence: float) -> Decision:
     try:
         raw = (text or "").strip()

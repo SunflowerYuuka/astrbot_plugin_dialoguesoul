@@ -6,7 +6,12 @@ from tests._helpers import _Plain, install_astrbot_stub
 
 install_astrbot_stub()
 
-from dialoguesoul.decision import NO_RESPONSE, parse_decision, parse_marker
+from dialoguesoul.decision import (
+    NO_RESPONSE,
+    parse_decision,
+    parse_marker,
+    parse_reply,
+)
 from dialoguesoul.hooks import Hooks
 from dialoguesoul.wake import WakeLimits, WakeManager
 
@@ -241,6 +246,80 @@ class HooksTest(unittest.IsolatedAsyncioTestCase):
         )
         await hooks.on_decorating_result(event)
         self.assertIsNone(event.get_result())
+
+    def test_proactive_reply_plain_records_reply(self):
+        hooks = Hooks(repo=None, wake=None, config={})
+        event = _Event(
+            {"ds_request_kind": "proactive_reply", "ds_reply_format": "plain"}
+        )
+        resp = types.SimpleNamespace(completion_text="接一句")
+
+        hooks.on_llm_response(event, resp)
+
+        self.assertEqual(resp.completion_text, "接一句")
+        reply = event.get_extra("ds_reply")
+        self.assertEqual((reply.action, reply.messages), ("reply", ["接一句"]))
+
+    def test_proactive_reply_json_records_messages_and_quote(self):
+        hooks = Hooks(repo=None, wake=None, config={})
+        event = _Event(
+            {"ds_request_kind": "proactive_reply", "ds_reply_format": "json"}
+        )
+        resp = types.SimpleNamespace(
+            completion_text='{"messages":["a","b"],"quote":1}'
+        )
+
+        hooks.on_llm_response(event, resp)
+
+        self.assertEqual(resp.completion_text, "a\nb")
+        reply = event.get_extra("ds_reply")
+        self.assertEqual((reply.action, reply.messages, reply.quote), ("reply", ["a", "b"], 1))
+
+    async def test_proactive_reply_json_decorating_rebuilds_multimessage_chain(self):
+        hooks = Hooks(repo=None, wake=None, config={})
+        result = types.SimpleNamespace(chain=[])
+        event = _Event(
+            {
+                "ds_request_kind": "proactive_reply",
+                "ds_reply_format": "json",
+                "ds_reply": parse_reply('{"messages":["a","b"],"quote":1}', 3),
+                "ds_history_map": {1: {"id": "m1", "sender_id": "u"}},
+            },
+            result=result,
+        )
+
+        await hooks.on_decorating_result(event)
+
+        self.assertEqual(result.chain[0].id, "m1")
+        self.assertEqual([component.text for component in result.chain[1:]], ["a", "b"])
+
+    async def test_proactive_reply_ignore_clears_result(self):
+        hooks = Hooks(repo=None, wake=None, config={})
+        result = types.SimpleNamespace(chain=[{"type": "plain", "text": "raw"}])
+        event = _Event(
+            {
+                "ds_request_kind": "proactive_reply",
+                "ds_reply_format": "json",
+                "ds_reply": parse_reply('{"messages":[]}', 3),
+            },
+            result=result,
+        )
+
+        await hooks.on_decorating_result(event)
+
+        self.assertIsNone(event.get_result())
+
+    async def test_proactive_reply_after_send_is_recorded(self):
+        repo = _Repo()
+        event = _Event(
+            {"ds_request_kind": "proactive_reply"},
+            result=types.SimpleNamespace(chain=[{"type": "plain", "text": "hi"}]),
+        )
+
+        await Hooks(repo=repo, wake=None, config={}).after_message_sent(event)
+
+        self.assertEqual(len(repo.messages), 1)
+        self.assertEqual(repo.messages[0].components, [{"type": "plain", "text": "hi"}])
 
     async def test_non_decision_event_is_ignored(self):
         hooks = Hooks(repo=None, wake=None, config={})

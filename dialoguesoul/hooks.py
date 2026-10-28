@@ -9,6 +9,7 @@ from .decision import (
     Decision,
     parse_decision,
     parse_marker,
+    parse_reply,
     rewrite_marker_response,
     rewrite_response,
 )
@@ -21,6 +22,10 @@ def _decision_format(event) -> str:
     return event.get_extra("ds_decision_format", _MARKER) or _MARKER
 
 
+def _reply_format(event) -> str:
+    return event.get_extra("ds_reply_format", "plain") or "plain"
+
+
 class Hooks:
     def __init__(self, repo, wake, config, gate=None):
         self.repo = repo
@@ -29,16 +34,35 @@ class Hooks:
         self.gate = gate
 
     def on_llm_response(self, event, resp):
-        if event.get_extra("ds_request_kind") != "decision":
-            return
+        kind = event.get_extra("ds_request_kind")
         role = getattr(resp, "role", "assistant")
+        text = getattr(resp, "completion_text", "") or ""
+
+        if kind == "proactive_reply":
+            if role != "assistant":
+                reply = Decision("ignore", f"role:{role}", [], 0.0, None)
+                event.set_extra("ds_reply", reply)
+                resp.completion_text = ""
+                return
+            if _reply_format(event) == "json":
+                reply = parse_reply(
+                    text,
+                    int(cfg.get(self.config, "decision.max_reply_messages", 3)),
+                )
+            else:
+                reply = parse_marker(text)
+            event.set_extra("ds_reply", reply)
+            rewrite_response(reply, resp)
+            return
+
+        if kind != "decision":
+            return
         if role != "assistant":
             event.set_extra(
                 "ds_decision", Decision("ignore", f"role:{role}", [], 0.0, None)
             )
             resp.completion_text = ""
             return
-        text = getattr(resp, "completion_text", "") or ""
         if _decision_format(event) == _MARKER:
             decision = parse_marker(text)
             rewrite_marker_response(decision, resp)
@@ -52,7 +76,27 @@ class Hooks:
         event.set_extra("ds_decision", decision)
 
     async def on_decorating_result(self, event):
-        if event.get_extra("ds_request_kind") != "decision":
+        kind = event.get_extra("ds_request_kind")
+        if kind == "proactive_reply":
+            reply = event.get_extra("ds_reply")
+            if reply is None or reply.action != "reply":
+                event.clear_result()
+                return
+            result = event.get_result()
+            if result is None:
+                return
+
+            from astrbot.api.all import Plain, Reply
+
+            chain = [Plain(text) for text in reply.messages]
+            history_map = event.get_extra("ds_history_map") or {}
+            if reply.quote and reply.quote in history_map:
+                ref = history_map[reply.quote]
+                chain.insert(0, Reply(id=ref["id"], sender_id=ref["sender_id"]))
+            result.chain = chain
+            return
+
+        if kind != "decision":
             return
         decision = event.get_extra("ds_decision")
         fmt = _decision_format(event)
@@ -99,7 +143,11 @@ class Hooks:
         """
         if not self.repo:
             return
-        if event.get_extra("ds_request_kind") not in ("normal", "decision"):
+        if event.get_extra("ds_request_kind") not in (
+            "normal",
+            "decision",
+            "proactive_reply",
+        ):
             return
 
         result = getattr(event, "_result", None)

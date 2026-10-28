@@ -203,6 +203,35 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
             {1: {"id": "m0", "sender_id": "u"}},
         )
 
+    async def test_proactive_reply_uses_reply_instruction(self):
+        event = FakeEvent()
+        built = await self._build(
+            _builder(), event, _base_config(), proactive_reply=True
+        )
+
+        self.assertEqual(event.get_extra("ds_request_kind"), "proactive_reply")
+        self.assertEqual(event.get_extra("ds_reply_format"), "plain")
+        self.assertIn("[回复要求]", built.request.system_prompt)
+        self.assertNotIn("[参与判断]", built.request.system_prompt)
+        self.assertNotIn("[决策协议]", built.request.system_prompt)
+        self.assertIs(event.get_extra("enable_streaming"), False)
+
+    async def test_proactive_reply_json_keeps_multimessage_instruction(self):
+        event = FakeEvent()
+        built = await self._build(
+            _builder(),
+            event,
+            _base_config(),
+            decision_format="json",
+            proactive_reply=True,
+        )
+
+        self.assertEqual(event.get_extra("ds_request_kind"), "proactive_reply")
+        self.assertEqual(event.get_extra("ds_reply_format"), "json")
+        self.assertIn("messages", built.request.system_prompt)
+        self.assertIn("quote", built.request.system_prompt)
+        self.assertNotIn("action", built.request.system_prompt)
+
     async def test_json_decision_request(self):
         event = FakeEvent()
         built = await self._build(

@@ -83,6 +83,28 @@ def build_summary_service(context, config):
     )
 
 
+def build_intervention_judge(context, config):
+    if not cfg.get(config, "extra_prompt.enabled", False):
+        return None
+
+    criteria = str(cfg.get(config, "extra_prompt.text", "") or "").strip()
+    if not criteria:
+        criteria = "判断当前聊天是否值得你介入。"
+    prompt = (
+        f"{criteria}\n\n"
+        "请结合最近聊天记录和当前消息，判断是否应该介入。只输出 YES 或 NO。"
+    )
+
+    async def resolver(event):
+        return await _provider(
+            context,
+            event.unified_msg_origin,
+            cfg.get(config, "extra_prompt.provider_id", ""),
+        )
+
+    return InterestJudge(resolver, prompt)
+
+
 def build_interest_judge(context, config):
     if cfg.get(config, "trigger.strategy", "window") != "interest":
         return None

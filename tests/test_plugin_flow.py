@@ -57,6 +57,16 @@ class FakeRepo:
         self.appended.append(message)
 
 
+class FakeJudge:
+    def __init__(self, result=True):
+        self.result = result
+        self.calls = []
+
+    async def __call__(self, event, history_text=""):
+        self.calls.append((event, history_text))
+        return self.result
+
+
 class GrowingRepo(FakeRepo):
     async def append(self, message):
         await super().append(message)
@@ -262,6 +272,124 @@ class PluginFlowTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(waits, [])
         self.assertEqual(len(requests), 1)
         self.assertEqual(event.get_extra("ds_request_kind"), "decision")
+
+    async def test_intervention_judge_blocks_proactive_reply(self):
+        config = _base_config()
+        config["extra_prompt"] = {
+            "enabled": True,
+            "text": "只回复技术问题",
+            "provider_id": "",
+        }
+        plugin = self._plugin(config=config)
+        judge = FakeJudge(False)
+        plugin.intervention_judge = judge
+        event = FakeEvent()
+
+        requests = await _collect(plugin, event)
+
+        self.assertEqual(requests, [])
+        self.assertIsNone(event.request)
+        self.assertEqual(len(judge.calls), 1)
+        self.assertIsNone(event.get_extra("ds_request_kind"))
+
+    async def test_intervention_judge_allows_proactive_reply(self):
+        config = _base_config()
+        config["extra_prompt"] = {
+            "enabled": True,
+            "text": "只回复技术问题",
+            "provider_id": "",
+        }
+        plugin = self._plugin(config=config)
+        judge = FakeJudge(True)
+        plugin.intervention_judge = judge
+        event = FakeEvent()
+
+        requests = await _collect(plugin, event)
+
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(event.get_extra("ds_request_kind"), "proactive_reply")
+        self.assertEqual(event.get_extra("ds_reply_format"), "plain")
+        self.assertIn("[回复要求]", requests[0].system_prompt)
+        self.assertNotIn("[参与判断]", requests[0].system_prompt)
+        self.assertEqual(len(judge.calls), 1)
+
+    async def test_intervention_judge_sees_wait_window_history(self):
+        repo = GrowingRepo()
+        config = _base_config()
+        config["trigger"]["proactive_delay_seconds"] = 5
+        config["extra_prompt"] = {
+            "enabled": True,
+            "text": "只回复技术问题",
+            "provider_id": "",
+        }
+        plugin = self._plugin(config=config, repo=repo)
+        judge = FakeJudge(False)
+        plugin.intervention_judge = judge
+        event = FakeEvent()
+
+        async def fake_wait(cancel, delay):
+            await repo.append(
+                ChatMessage(
+                    platform="p",
+                    self_id="bot",
+                    chat_type="group",
+                    chat_id="1",
+                    message_id="m2",
+                    sender_id="v",
+                    sender_name="V",
+                    timestamp=time.time() + 0.01,
+                    components=[{"type": "plain", "text": "wait-context"}],
+                )
+            )
+            return False
+
+        with patch.object(plugin, "_wait_delay", fake_wait):
+            requests = await _collect(plugin, event)
+
+        self.assertEqual(requests, [])
+        self.assertEqual(len(judge.calls), 1)
+        self.assertIn("wait-context", judge.calls[0][1])
+
+    async def test_direct_address_skips_intervention_judge(self):
+        config = _base_config()
+        config["extra_prompt"] = {
+            "enabled": True,
+            "text": "只回复技术问题",
+            "provider_id": "",
+        }
+        plugin = self._plugin(config=config)
+        judge = FakeJudge(False)
+        plugin.intervention_judge = judge
+        event = FakeEvent(
+            "hi", "m1", components=[_Plain(text="hi"), _At(qq="bot")]
+        )
+
+        requests = await _collect(plugin, event)
+
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(event.get_extra("ds_request_kind"), "normal")
+        self.assertEqual(judge.calls, [])
+
+    async def test_wake_non_direct_uses_intervention_judge(self):
+        config = _base_config()
+        config["wake"]["enabled"] = True
+        config["extra_prompt"] = {
+            "enabled": True,
+            "text": "只回复技术问题",
+            "provider_id": "",
+        }
+        plugin = self._plugin(config=config)
+        judge = FakeJudge(False)
+        plugin.intervention_judge = judge
+        event = FakeEvent()
+
+        requests = await _collect(plugin, event)
+
+        self.assertEqual(requests, [])
+        self.assertEqual(len(judge.calls), 1)
+        key = ("p", "bot", "group", "1")
+        self.assertIsNone(plugin.wake.get(key))
+        self.assertNotIn(key, plugin.wake._reserved)
 
     async def test_successful_send_records_cooldown_for_next_candidate(self):
         config = _base_config()

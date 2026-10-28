@@ -8,6 +8,7 @@ install_astrbot_stub()
 from dialoguesoul.context.live import (
     build_caption_service,
     build_interest_judge,
+    build_intervention_judge,
     build_summary_service,
 )
 
@@ -149,6 +150,73 @@ class LiveServiceTest(unittest.IsolatedAsyncioTestCase):
             get_message_outline=lambda: "当前消息",
         )
         judge = build_interest_judge(context, config)
+        self.assertFalse(await judge(event, "最近聊天"))
+
+    async def test_intervention_judge_uses_extra_prompt_and_provider(self):
+        provider = Provider("YES")
+        context = Context(by_id=provider)
+        config = {
+            "extra_prompt": {
+                "enabled": True,
+                "text": "只回复技术问题",
+                "provider_id": "judge",
+            }
+        }
+        event = types.SimpleNamespace(
+            unified_msg_origin="umo",
+            get_message_outline=lambda: "当前消息",
+        )
+
+        judge = build_intervention_judge(context, config)
+
+        self.assertTrue(await judge(event, "最近聊天"))
+        self.assertEqual(context.by_id_ids, ["judge"])
+        prompt = provider.calls[0]["prompt"]
+        self.assertIn("只回复技术问题", prompt)
+        self.assertIn("最近聊天", prompt)
+        self.assertIn("当前消息", prompt)
+        self.assertIn("只输出 YES 或 NO", prompt)
+        self.assertEqual(provider.calls[0]["system_prompt"], "只输出 YES 或 NO。")
+
+    async def test_intervention_judge_disabled_without_extra_prompt(self):
+        self.assertIsNone(
+            build_intervention_judge(
+                Context(), {"extra_prompt": {"enabled": False, "text": "忽略"}}
+            )
+        )
+
+    async def test_intervention_judge_uses_default_criteria_when_text_empty(self):
+        provider = Provider("NO")
+        context = Context(current=provider)
+        config = {
+            "extra_prompt": {"enabled": True, "text": "", "provider_id": ""}
+        }
+        event = types.SimpleNamespace(
+            unified_msg_origin="umo",
+            get_message_outline=lambda: "当前消息",
+        )
+
+        judge = build_intervention_judge(context, config)
+
+        self.assertFalse(await judge(event, "最近聊天"))
+        self.assertIn("判断当前聊天是否值得你介入", provider.calls[0]["prompt"])
+
+    async def test_intervention_judge_provider_errors_degrade_to_false(self):
+        context = Context(by_id=FailingProvider())
+        config = {
+            "extra_prompt": {
+                "enabled": True,
+                "text": "只回复技术问题",
+                "provider_id": "judge",
+            }
+        }
+        event = types.SimpleNamespace(
+            unified_msg_origin="umo",
+            get_message_outline=lambda: "当前消息",
+        )
+
+        judge = build_intervention_judge(context, config)
+
         self.assertFalse(await judge(event, "最近聊天"))
 
     async def test_caption_provider_errors_are_skipped(self):

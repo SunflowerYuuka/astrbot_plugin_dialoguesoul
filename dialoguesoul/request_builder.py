@@ -14,6 +14,7 @@ from .context.prompt import (
     build_system_prompt,
     format_history,
 )
+from .decision import build_reply_instruction
 from .models import ChatKey
 
 
@@ -58,6 +59,7 @@ class RequestBuilder:
         wake_starts: bool = False,
         wake_limits=None,
         extra_image_urls=None,
+        proactive_reply: bool = False,
     ) -> BuiltRequest:
         key = ChatKey.from_event(event)
         limit = history_limit(config, decision)
@@ -146,14 +148,18 @@ class RequestBuilder:
                     "wake.final_reply_prompt",
                     cfg.DEFAULTS["wake"]["final_reply_prompt"],
                 )
+        reply_format = "json" if decision_format == "json" else "plain"
         system_prompt = build_system_prompt(
             persona,
             build_environment(event),
             history_text,
             extra_prompt,
-            decision,
+            decision and not proactive_reply,
             decision_format=decision_format,
             wake_hint=wake_hint,
+            reply_instruction=(
+                build_reply_instruction(reply_format) if proactive_reply else ""
+            ),
         )
         request = event.request_llm(
             prompt="\n".join(segments) or "[非文本消息]",
@@ -165,7 +171,11 @@ class RequestBuilder:
         request.session_id = event.unified_msg_origin
         event.call_llm = True
 
-        if decision:
+        if proactive_reply:
+            event.set_extra("ds_request_kind", "proactive_reply")
+            event.set_extra("ds_reply_format", reply_format)
+            event.set_extra("enable_streaming", False)
+        elif decision:
             event.set_extra("ds_request_kind", "decision")
             event.set_extra("ds_decision_format", decision_format)
             event.set_extra("enable_streaming", False)

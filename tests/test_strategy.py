@@ -108,6 +108,24 @@ class StrategyTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(seen, ["记录", "记录"])
 
+    async def test_interest_judge_skipped_when_extra_prompt_gate_enabled(self):
+        called = []
+
+        async def judge(event, history_text=""):
+            called.append(history_text)
+            return False
+
+        engine = StrategyEngine(Gate(), WakeManager(), interest_judge=judge)
+        data = config(
+            "interest",
+            extra_prompt={"enabled": True, "text": "只回复技术问题"},
+        )
+
+        result = await engine.route(E("普通"), data, history_text="记录")
+
+        self.assertEqual(result.kind, "decision")
+        self.assertEqual(called, [])
+
     async def test_missing_interest_judge_ignores(self):
         engine = StrategyEngine(Gate(), WakeManager())
         self.assertEqual((await engine.route(E("想聊"), config("interest"))).kind, "ignore")

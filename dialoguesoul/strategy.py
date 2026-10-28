@@ -113,8 +113,9 @@ class StrategyEngine:
         elif strategy == "interest":
             if self.interest_judge is None:
                 return RouteDecision("ignore")
-            if not await self.interest_judge(event, history_text):
-                return RouteDecision("ignore")
+            if not cfg.get(config, "extra_prompt.enabled", False):
+                if not await self.interest_judge(event, history_text):
+                    return RouteDecision("ignore")
 
         if strategy == "window":
             self._last_considered[key] = now

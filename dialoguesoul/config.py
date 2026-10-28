@@ -74,7 +74,7 @@ DEFAULTS: dict[str, Any] = {
         },
     },
     "persona": {"enabled": True, "name": ""},
-    "extra_prompt": {"enabled": False, "text": ""},
+    "extra_prompt": {"enabled": False, "text": "", "provider_id": ""},
     "storage": {"db_path": "", "retention_days": 30, "retention_count": 500},
 }
 
