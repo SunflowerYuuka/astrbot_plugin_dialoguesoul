@@ -650,7 +650,7 @@ class VersionConsistencyTest(unittest.TestCase):
 
 ```yaml
 name: dialoguesoul
-display_name: 🫧 DialoguesSoul
+display_name: DialoguesSoul
 short_desc: 让大模型真正参与群聊，而不是只会等待被叫到
 desc: 基于 AstrBot 管线实现的群聊社交插件，支持自主回复、唤醒会话、图片与合并转发上下文，并兼容知识库和第三方长期记忆插件。
 help: 自动判断是否参与群聊，并在需要时调用 AstrBot 模型回复。
@@ -669,7 +669,7 @@ jsonpickle>=3.0.0
 `README.md`：
 
 ```markdown
-# 🫧 DialoguesSoul
+# DialoguesSoul
 
 [![version](https://img.shields.io/badge/version-v1.0.0-blue.svg?style=flat-square)](https://github.com/SunflowerYuuka/astrbot_plugin_dialoguesoul)
 

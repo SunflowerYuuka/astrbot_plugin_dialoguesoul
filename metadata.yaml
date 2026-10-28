@@ -1,7 +1,7 @@
 name: dialoguesoul
-display_name: 🫧 DialoguesSoul
-short_desc: 让大模型真正参与群聊，而不是只会等待被叫到
-desc: 本项目由 AI 制作。基于 AstrBot 管线实现的群聊社交插件，支持自主回复、唤醒会话、图片与合并转发上下文，并兼容知识库和第三方长期记忆插件。
+display_name: 言灵
+short_desc: DialoguesSoul｜让大模型真正参与群聊，而不是只会等待被叫到
+desc: 本项目由 AI 制作。言灵（DialoguesSoul）是基于 AstrBot 管线实现的群聊社交插件，支持自主回复、唤醒会话、图片与合并转发上下文，并兼容知识库和第三方长期记忆插件。
 help: 自动判断是否参与群聊，并在需要时调用 AstrBot 模型回复。
 version: 1.3.0
 author: SunflowerYuuka
