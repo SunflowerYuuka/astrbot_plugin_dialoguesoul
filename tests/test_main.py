@@ -63,7 +63,7 @@ class MainWiringTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             cls.__register__[0][:4],
-            ("dialoguesoul", "SunflowerYuuka", "DialoguesSoul", "1.2.0"),
+            ("dialoguesoul", "SunflowerYuuka", "DialoguesSoul", "1.2.1"),
         )
         self.assertTrue(hasattr(cls.ds, "__command_group__"))
         for name in ("on_group_message", "on_private_message"):

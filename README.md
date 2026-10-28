@@ -1,6 +1,6 @@
 # 🫧 DialoguesSoul
 
-[![version](https://img.shields.io/badge/version-v1.2.0-blue.svg?style=flat-square)](https://github.com/SunflowerYuuka/astrbot_plugin_dialoguesoul)
+[![version](https://img.shields.io/badge/version-v1.2.1-blue.svg?style=flat-square)](https://github.com/SunflowerYuuka/astrbot_plugin_dialoguesoul)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square)](LICENSE)
 
 让大模型真正参与群聊的 AstrBot 插件。DialoguesSoul 负责触发判断、上下文组装、决策解析与唤醒会话；生成、知识库、第三方长期记忆和发送都交给 AstrBot 管线。
