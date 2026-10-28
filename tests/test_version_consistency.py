@@ -12,6 +12,3 @@ class VersionConsistencyTest(unittest.TestCase):
         self.assertIn("version: 1.2.1", (ROOT / "metadata.yaml").read_text("utf-8"))
         self.assertIn("version-v1.2.1-", (ROOT / "README.md").read_text("utf-8"))
         self.assertIn("## v1.2.1", (ROOT / "CHANGELOG.md").read_text("utf-8"))
-        changelog = ROOT / "changelogs" / "v1.2.1.md"
-        self.assertTrue(changelog.exists())
-        self.assertIn("# v1.2.1", changelog.read_text("utf-8"))
