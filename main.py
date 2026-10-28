@@ -14,7 +14,7 @@ from .dialoguesoul.storage.paths import resolve_db_path
     "dialoguesoul",
     "SunflowerYuuka",
     "DialoguesSoul",
-    "1.1.0",
+    "1.2.0",
     "https://github.com/SunflowerYuuka/astrbot_plugin_dialoguesoul",
 )
 class DialoguesSoul(Star):
