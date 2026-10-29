@@ -70,7 +70,7 @@ class MainWiringTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(metadata["name"], "dialoguesoul")
         self.assertEqual(metadata["author"], "SunflowerYuuka")
-        self.assertEqual(metadata["version"], "1.3.0")
+        self.assertEqual(metadata["version"], "1.4.0")
         # 新版 AstrBot 自动识别 Star 子类，不再需要（已弃用的）@register
         self.assertFalse(hasattr(cls, "__register__"))
         self.assertTrue(hasattr(cls.ds, "__command_group__"))

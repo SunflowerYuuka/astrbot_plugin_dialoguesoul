@@ -1,6 +1,6 @@
 # 言灵（DialoguesSoul）
 
-[![version](https://img.shields.io/badge/version-v1.3.0-blue.svg?style=flat-square)](https://github.com/SunflowerYuuka/astrbot_plugin_dialoguesoul)
+[![version](https://img.shields.io/badge/version-v1.4.0-blue.svg?style=flat-square)](https://github.com/SunflowerYuuka/astrbot_plugin_dialoguesoul)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square)](LICENSE)
 
 言灵（DialoguesSoul）是让大模型真正参与群聊的 AstrBot 插件。它负责触发判断、上下文组装、决策解析与唤醒会话；生成、知识库、第三方长期记忆和发送都交给 AstrBot 管线。
