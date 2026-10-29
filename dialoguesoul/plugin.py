@@ -26,6 +26,45 @@ from .request_builder import RequestBuilder, history_limit
 from .strategy import StrategyEngine
 from .wake import WakeManager
 
+# 直呼消息等待该聊天上一条回复的最长时间。超时后不再串行等待，
+# 避免某次模型调用卡死时该聊天永久失去响应。
+_LOCK_WAIT_SECONDS = 120.0
+
+
+def _warn_lock_timeout() -> None:
+    try:
+        from astrbot.api.all import logger
+
+        logger.warning(
+            "DialoguesSoul: 等待该聊天的上一条回复超过 %.0f 秒，本次未串行等待",
+            _LOCK_WAIT_SECONDS,
+        )
+    except Exception:
+        pass
+
+
+class _TimedLock:
+    """带超时的聊天锁：超时后放行并记录日志，而不是无限等待。"""
+
+    def __init__(self, lock: asyncio.Lock, timeout: float):
+        self.lock = lock
+        self.timeout = timeout
+        self.acquired = False
+
+    async def __aenter__(self):
+        try:
+            await asyncio.wait_for(self.lock.acquire(), timeout=self.timeout)
+            self.acquired = True
+        except asyncio.TimeoutError:
+            self.acquired = False
+            _warn_lock_timeout()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        if self.acquired:
+            self.lock.release()
+        return False
+
 
 class DialoguesSoulPlugin:
     def __init__(self, context, config, repo):
@@ -112,7 +151,7 @@ class DialoguesSoulPlugin:
                 cancel.set()
         if lock.locked() and not direct:
             return
-        async with lock:
+        async with _TimedLock(lock, _LOCK_WAIT_SECONDS):
             self._lock_seen[key] = time.time()
             limit = history_limit(self.config, True)
             history = exclude_current_message(
@@ -125,6 +164,9 @@ class DialoguesSoulPlugin:
             if route.kind == "ignore":
                 return
             decision = route.kind == "decision"
+            # 私聊在唤醒会话中仍先等待，以便把等待窗口内到达的图片一起送入模型；
+            # 但私聊不注入 "群成员参与判断" 的决策协议，也不做介入判断。
+            private_normal = decision and event.is_private_chat()
             extra_image_urls = []
             if decision and not direct:
                 delay = float(
@@ -143,7 +185,10 @@ class DialoguesSoulPlugin:
                         return
                     extra_image_urls = await self._wait_window_images(key, wait_started)
             intervention = (
-                decision and not direct and self.intervention_judge is not None
+                decision
+                and not direct
+                and not private_normal
+                and self.intervention_judge is not None
             )
             if intervention:
                 gate_history = exclude_current_message(
@@ -167,7 +212,7 @@ class DialoguesSoulPlugin:
             built = await self.builder.build(
                 event,
                 self.config,
-                decision=decision,
+                decision=decision and not private_normal,
                 wake_session=route.wake_session,
                 context=self.context,
                 decision_format=cfg.get(self.config, "decision.format", "marker"),

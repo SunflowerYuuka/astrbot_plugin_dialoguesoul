@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..logutil import warn_once
+
 
 class SummaryService:
     """可选摘要：仅在消息量达到阈值时交给注入的摘要器。"""
@@ -13,5 +15,10 @@ class SummaryService:
             return fallback
         try:
             return await self.summarizer(umo, fallback)
-        except Exception:
+        except Exception as exc:
+            warn_once(
+                "dialoguesoul.summary",
+                f"Dialoguesoul: 上下文摘要失败（{type(exc).__name__}: {exc}），"
+                "回退到完整聊天记录",
+            )
             return fallback

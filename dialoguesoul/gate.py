@@ -21,6 +21,13 @@ def plain_text(event) -> str:
     return (event.get_message_outline() or "").strip()
 
 
+def _words(values) -> list[str]:
+    """过滤掉空白关键词，避免空字符串命中所有消息。"""
+    if not values:
+        return []
+    return [word for word in (str(value).strip() for value in values) if word]
+
+
 @dataclass(frozen=True)
 class GateResult:
     action: str
@@ -99,9 +106,9 @@ class Gate:
         text = (event.get_message_outline() or "").strip()
         if not text and not direct:
             return GateResult("skip", "empty")
-        prefixes = cfg.get(config, "trigger.ignored_prefixes", []) or []
+        prefixes = _words(cfg.get(config, "trigger.ignored_prefixes", []))
         stripped = plain_text(event).lstrip()
-        if any(prefix and stripped.startswith(prefix) for prefix in prefixes):
+        if any(stripped.startswith(prefix) for prefix in prefixes):
             return GateResult("skip", "command_prefix")
         if str(event.get_sender_id()) == str(event.get_self_id()):
             return GateResult("skip", "self")
@@ -115,7 +122,7 @@ class Gate:
         if message_id and seen_key in self._seen:
             return GateResult("skip", "duplicate")
 
-        blacklist = cfg.get(config, "trigger.blacklist_keywords", []) or []
+        blacklist = _words(cfg.get(config, "trigger.blacklist_keywords", []))
         if any(word in text for word in blacklist):
             return GateResult("skip", "blacklist_keyword")
 
@@ -135,7 +142,7 @@ class Gate:
         text = plain_text(event)
         if self.is_direct_address(event):
             return GateResult("candidate", "mentioned", "mention", 2)
-        keywords = cfg.get(config, "trigger.keywords", []) or []
+        keywords = _words(cfg.get(config, "trigger.keywords", []))
         if any(word in text for word in keywords):
             return GateResult("candidate", "keyword", "keyword", 1)
         if _QUESTION.search(text):

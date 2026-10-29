@@ -25,10 +25,19 @@ async def _call_with_timeout(call, timeout: float):
 
 async def _provider(context, umo: str, provider_id: str):
     provider = None
-    if provider_id and hasattr(context, "get_provider_by_id"):
-        provider = context.get_provider_by_id(provider_id)
-    if provider is None and hasattr(context, "get_using_provider"):
-        provider = context.get_using_provider(umo=umo)
+    if provider_id:
+        getter = getattr(context, "get_provider_by_id", None)
+        if callable(getter):
+            provider = getter(provider_id)
+    if provider is None:
+        # get_using_provider 已弃用，优先使用异步版本
+        getter = getattr(context, "get_using_provider_async", None)
+        if callable(getter):
+            provider = getter(umo=umo)
+    if provider is None:
+        getter = getattr(context, "get_using_provider", None)
+        if callable(getter):
+            provider = getter(umo=umo)
     if inspect.isawaitable(provider):
         provider = await provider
     return provider
@@ -123,7 +132,9 @@ def build_intervention_judge(context, config):
             cfg.get(config, "extra_prompt.provider_id", ""),
         )
 
-    return InterestJudge(resolver, prompt, timeout=aux_timeout(config))
+    return InterestJudge(
+        resolver, prompt, timeout=aux_timeout(config), name="附加提示词判断"
+    )
 
 
 def build_interest_judge(context, config):
@@ -143,4 +154,5 @@ def build_interest_judge(context, config):
         resolver,
         "判断这条群聊消息是否值得你像群友一样接话。只输出 YES 或 NO。",
         timeout=aux_timeout(config),
+        name="兴趣判断",
     )

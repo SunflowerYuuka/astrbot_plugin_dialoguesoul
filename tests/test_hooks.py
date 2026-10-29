@@ -229,7 +229,50 @@ class HooksTest(unittest.IsolatedAsyncioTestCase):
             result=result,
         )
         await hooks.on_decorating_result(event)
-        self.assertEqual([component.text for component in result.chain], ["a", "b"])
+        self.assertEqual([component.text for component in result.chain], ["a\nb"])
+
+    async def test_json_reply_keeps_cleaned_text_from_other_plugins(self):
+        hooks = Hooks(repo=None, wake=None, config={})
+        event = _Event({"ds_request_kind": "decision", "ds_decision_format": "json"})
+        resp = types.SimpleNamespace(
+            completion_text='{"action":"reply","messages":["你好[好感度上升]"],"confidence":0.9}'
+        )
+        hooks.on_llm_response(event, resp)
+        # 模拟其他插件（如好感度插件）在本插件之后清理 completion_text
+        resp.completion_text = resp.completion_text.replace("[好感度上升]", "")
+        result = types.SimpleNamespace(chain=[_Plain(resp.completion_text)])
+        event._result = result
+        await hooks.on_decorating_result(event)
+        self.assertEqual([component.text for component in result.chain], ["你好"])
+
+    async def test_json_cleaned_text_keeps_multiple_message_lines(self):
+        hooks = Hooks(repo=None, wake=None, config={})
+        event = _Event({"ds_request_kind": "decision", "ds_decision_format": "json"})
+        resp = types.SimpleNamespace(
+            completion_text=(
+                '{"action":"reply","messages":["甲【开心】","乙[好感度上升]"],'
+                '"confidence":0.9}'
+            )
+        )
+        hooks.on_llm_response(event, resp)
+        resp.completion_text = (
+            resp.completion_text.replace("【开心】", "").replace("[好感度上升]", "")
+        )
+        result = types.SimpleNamespace(chain=[_Plain(resp.completion_text)])
+        event._result = result
+        await hooks.on_decorating_result(event)
+        self.assertEqual([component.text for component in result.chain], ["甲\n乙"])
+
+    async def test_proactive_reply_keeps_cleaned_text_from_other_plugins(self):
+        hooks = Hooks(repo=None, wake=None, config={})
+        event = _Event({"ds_request_kind": "proactive_reply"})
+        resp = types.SimpleNamespace(completion_text="你好【开心】[好感度上升]")
+        hooks.on_llm_response(event, resp)
+        resp.completion_text = "你好"
+        result = types.SimpleNamespace(chain=[_Plain(resp.completion_text)])
+        event._result = result
+        await hooks.on_decorating_result(event)
+        self.assertEqual([component.text for component in result.chain], ["你好"])
 
     async def test_json_ignore_clears_result(self):
         hooks = Hooks(repo=None, wake=None, config={})
@@ -291,7 +334,7 @@ class HooksTest(unittest.IsolatedAsyncioTestCase):
         await hooks.on_decorating_result(event)
 
         self.assertEqual(result.chain[0].id, "m1")
-        self.assertEqual([component.text for component in result.chain[1:]], ["a", "b"])
+        self.assertEqual([component.text for component in result.chain[1:]], ["a\nb"])
 
     async def test_proactive_reply_ignore_clears_result(self):
         hooks = Hooks(repo=None, wake=None, config={})

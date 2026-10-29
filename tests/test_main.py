@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import yaml
+
 from tests._helpers import install_astrbot_stub, load_plugin_main
 
 install_astrbot_stub()
@@ -57,14 +59,20 @@ class MainWiringTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 await plugin.terminate()
 
-    def test_register_and_hook_decorators_are_present(self):
+    def test_metadata_and_hook_decorators_are_present(self):
         module = load_plugin_main()
         cls = module.DialoguesSoul
 
-        self.assertEqual(
-            cls.__register__[0][:4],
-            ("dialoguesoul", "SunflowerYuuka", "DialoguesSoul", "1.3.0"),
+        metadata = yaml.safe_load(
+            (Path(__file__).resolve().parents[1] / "metadata.yaml").read_text(
+                encoding="utf-8"
+            )
         )
+        self.assertEqual(metadata["name"], "dialoguesoul")
+        self.assertEqual(metadata["author"], "SunflowerYuuka")
+        self.assertEqual(metadata["version"], "1.3.0")
+        # 新版 AstrBot 自动识别 Star 子类，不再需要（已弃用的）@register
+        self.assertFalse(hasattr(cls, "__register__"))
         self.assertTrue(hasattr(cls.ds, "__command_group__"))
         for name in ("on_group_message", "on_private_message"):
             self.assertTrue(hasattr(getattr(cls, name), "__event_message_type__"))

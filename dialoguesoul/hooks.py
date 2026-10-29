@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 import uuid
 
@@ -26,6 +27,26 @@ def _reply_format(event) -> str:
     return event.get_extra("ds_reply_format", "plain") or "plain"
 
 
+def _chain_text(chain) -> str:
+    """取消息链里所有文本段拼接后的文本（忽略引用、图片等非文本段）。"""
+    parts = []
+    for component in chain or []:
+        text = getattr(component, "text", None)
+        if isinstance(text, str):
+            parts.append(text)
+    return "".join(parts).strip()
+
+
+def _looks_like_json_object(text: str) -> bool:
+    stripped = (text or "").strip()
+    if not (stripped.startswith("{") and stripped.endswith("}")):
+        return False
+    try:
+        return isinstance(json.loads(stripped), dict)
+    except Exception:
+        return False
+
+
 class Hooks:
     def __init__(self, repo, wake, config, gate=None):
         self.repo = repo
@@ -43,6 +64,7 @@ class Hooks:
                 reply = Decision("ignore", f"role:{role}", [], 0.0, None)
                 event.set_extra("ds_reply", reply)
                 resp.completion_text = ""
+                event.set_extra("ds_llm_text", "")
                 return
             if _reply_format(event) == "json":
                 reply = parse_reply(
@@ -53,6 +75,7 @@ class Hooks:
                 reply = parse_marker(text)
             event.set_extra("ds_reply", reply)
             rewrite_response(reply, resp)
+            event.set_extra("ds_llm_text", resp.completion_text or "")
             return
 
         if kind != "decision":
@@ -62,6 +85,7 @@ class Hooks:
                 "ds_decision", Decision("ignore", f"role:{role}", [], 0.0, None)
             )
             resp.completion_text = ""
+            event.set_extra("ds_llm_text", "")
             return
         if _decision_format(event) == _MARKER:
             decision = parse_marker(text)
@@ -74,6 +98,7 @@ class Hooks:
             )
             rewrite_response(decision, resp)
         event.set_extra("ds_decision", decision)
+        event.set_extra("ds_llm_text", resp.completion_text or "")
 
     async def on_decorating_result(self, event):
         kind = event.get_extra("ds_request_kind")
@@ -85,10 +110,14 @@ class Hooks:
             result = event.get_result()
             if result is None:
                 return
+            reply = self._apply_cleaned_text(event, result, reply, _reply_format(event))
+            if reply.action != "reply":
+                event.clear_result()
+                return
 
             from astrbot.api.all import Plain, Reply
 
-            chain = [Plain(text) for text in reply.messages]
+            chain = [Plain("\n".join(reply.messages))]
             history_map = event.get_extra("ds_history_map") or {}
             if reply.quote and reply.quote in history_map:
                 ref = history_map[reply.quote]
@@ -111,15 +140,50 @@ class Hooks:
         if decision is None or decision.action != "reply":
             event.clear_result()
             return
+        decision = self._apply_cleaned_text(event, result, decision, fmt)
+        if decision.action != "reply":
+            event.clear_result()
+            return
 
         from astrbot.api.all import Plain, Reply
 
-        chain = [Plain(text) for text in decision.messages]
+        chain = [Plain("\n".join(decision.messages))]
         history_map = event.get_extra("ds_history_map") or {}
         if decision.quote and decision.quote in history_map:
             ref = history_map[decision.quote]
             chain.insert(0, Reply(id=ref["id"], sender_id=ref["sender_id"]))
         result.chain = chain
+
+    def _max_messages(self) -> int:
+        return int(cfg.get(self.config, "decision.max_reply_messages", 3))
+
+    def _apply_cleaned_text(self, event, result, decision, fmt: str) -> Decision:
+        """以最终消息链为准重新解析回复，兼容其他插件对文本的清洗。
+
+        ``on_llm_response`` 里已经按原始文本解析过一次；如果之后其他插件
+        （如好感度插件）清理了 ``completion_text`` 中的标签或表情标记，
+        这里用最终链文本重新解析，避免用清洗前的结果把它们覆盖回去。
+        """
+        expected = str(event.get_extra("ds_llm_text") or "").strip()
+        current = _chain_text(getattr(result, "chain", None))
+        if current == expected:
+            return decision
+        if not current:
+            return Decision("ignore", "cleaned_empty", [], 0.0, None)
+        if fmt == "json":
+            parsed = parse_reply(current, self._max_messages())
+            if parsed.action == "reply":
+                if parsed.quote is None:
+                    parsed.quote = decision.quote
+                return parsed
+            if _looks_like_json_object(current):
+                return Decision("ignore", "parse_failed", [], 0.0, None)
+            lines = [line.strip() for line in current.splitlines() if line.strip()]
+            messages = lines[: self._max_messages()] or [current]
+            return Decision(
+                "reply", decision.reason, messages, decision.confidence, decision.quote
+            )
+        return parse_marker(current)
 
     @staticmethod
     def _send_confirmed(event) -> bool:

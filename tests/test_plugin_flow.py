@@ -388,6 +388,35 @@ class PluginFlowTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(wake_meta["starts_session"])
         self.assertIsNotNone(wake_meta["limits"])
 
+    async def test_private_chat_in_wake_session_waits_but_skips_decision_protocol(self):
+        config = _base_config()
+        config["enabled_private"] = True
+        config["trigger"]["proactive_delay_seconds"] = 5
+        config["wake"] = {"enabled": True}
+        config["extra_prompt"] = {"enabled": True, "text": "只回复技术问题"}
+        plugin = self._plugin(config=config)
+        judge = FakeJudge(True)
+        plugin.intervention_judge = judge
+        key = ("p", "bot", "private", "u")
+        limits = WakeLimits(300, 5, 120)
+        plugin.wake.reserve(key, limits, "s1")
+        plugin.wake.record_delivery(key, limits, "s1", starts_session=True)
+        event = FakeEvent(private=True)
+        waits = []
+
+        async def fake_wait(cancel, delay):
+            waits.append(delay)
+            return False
+
+        with patch.object(plugin, "_wait_delay", fake_wait):
+            requests = await _collect(plugin, event)
+
+        self.assertEqual(waits, [5.0])
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(event.get_extra("ds_request_kind"), "normal")
+        self.assertNotIn("[参与判断]", requests[0].system_prompt)
+        self.assertEqual(judge.calls, [])
+
     async def test_cancel_pending_interrupts_delay(self):
         config = _base_config()
         config["trigger"]["proactive_delay_seconds"] = 5
@@ -512,6 +541,27 @@ class PluginFlowTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first_event.get_extra("ds_request_kind"), "decision")
         self.assertEqual(len(direct_requests), 1)
         self.assertEqual(direct_event.get_extra("ds_request_kind"), "normal")
+
+    async def test_direct_message_proceeds_after_lock_wait_timeout(self):
+        repo = BlockingRepo()
+        plugin = self._plugin(repo=repo)
+        first = asyncio.create_task(_collect(plugin, FakeEvent("first", "m1")))
+        await asyncio.wait_for(repo.entered.wait(), 1)
+        direct = FakeEvent(
+            "third",
+            "m3",
+            components=[_Plain(text="third"), _At(qq="bot")],
+        )
+
+        with patch("dialoguesoul.plugin._LOCK_WAIT_SECONDS", 0.05), patch(
+            "dialoguesoul.plugin._warn_lock_timeout"
+        ) as warn:
+            requests = await asyncio.wait_for(_collect(plugin, direct), 2)
+
+        self.assertEqual(len(requests), 1)
+        warn.assert_called_once()
+        repo.release.set()
+        await asyncio.wait_for(first, 1)
 
     async def test_user_message_is_saved_before_routing(self):
         repo = FakeRepo()

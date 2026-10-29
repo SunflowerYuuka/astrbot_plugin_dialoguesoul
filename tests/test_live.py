@@ -1,6 +1,7 @@
 import asyncio
 import types
 import unittest
+from unittest import mock
 
 from tests._helpers import install_astrbot_stub
 
@@ -255,7 +256,36 @@ class LiveServiceTest(unittest.IsolatedAsyncioTestCase):
             }
         }
         service = build_caption_service(context, config)
-        self.assertEqual(await service.caption(["http://img"], umo="umo"), {})
+        with mock.patch("dialoguesoul.context.images.warn_once") as warn:
+            self.assertEqual(await service.caption(["http://img"], umo="umo"), {})
+        warn.assert_called_once()
+        self.assertEqual(warn.call_args[0][0], "dialoguesoul.caption")
+
+    async def test_async_provider_lookup_is_preferred(self):
+        class AsyncContext:
+            def __init__(self):
+                self.used = []
+
+            async def get_using_provider_async(self, umo):
+                self.used.append("async")
+                return Provider("摘要")
+
+            def get_using_provider(self, umo):
+                self.used.append("sync")
+                return Provider("旧")
+
+        context = AsyncContext()
+        service = build_summary_service(
+            context,
+            {"context": {"summary": {"enabled": True, "provider_id": "", "threshold": 2}}},
+        )
+        messages = [
+            types.SimpleNamespace(components=[{"type": "plain", "text": "x"}]),
+            types.SimpleNamespace(components=[{"type": "plain", "text": "y"}]),
+        ]
+
+        self.assertEqual(await service.summarize(messages, "umo", "fallback"), "摘要")
+        self.assertEqual(context.used, ["async"])
 
 
 if __name__ == "__main__":

@@ -100,6 +100,17 @@ class HardCheckTest(unittest.TestCase):
         result = self.gate.hard_check(E("别拉黑我"), config())
         self.assertEqual((result.action, result.reason), ("skip", "blacklist_keyword"))
 
+    def test_blank_blacklist_entry_is_ignored(self):
+        data = config()
+        data["trigger"]["blacklist_keywords"] = [""]
+        self.assertIsNone(self.gate.hard_check(E("hi"), data))
+
+    def test_blank_keyword_entry_does_not_trigger(self):
+        data = config()
+        data["trigger"]["keywords"] = ["", "  "]
+        result = self.gate.check(E("hi"), data)
+        self.assertEqual((result.action, result.reason), ("skip", "no_trigger"))
+
     def test_hard_check_skips_non_direct_cooldown(self):
         self.gate.record_reply(E("触发"), now=1000.0)
         result = self.gate.hard_check(E("触发", message_id="m2"), config(), now=1001.0)

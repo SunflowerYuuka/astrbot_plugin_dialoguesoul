@@ -26,7 +26,6 @@ def history_limit(config, decision: bool) -> int:
 @dataclass
 class BuiltRequest:
     request: object
-    wake_meta: dict | None
 
 
 class RequestBuilder:
@@ -93,8 +92,7 @@ class RequestBuilder:
         segments = [current_text] if current_text else []
         caption = caption_service or self.caption_service
         if (
-            decision
-            and image_urls
+            image_urls
             and caption is not None
             and cfg.get(config, "context.image_caption.enabled", False)
         ):
@@ -182,11 +180,4 @@ class RequestBuilder:
         else:
             event.set_extra("ds_request_kind", "normal")
 
-        wake_meta = None
-        if wake_session is not None:
-            wake_meta = {
-                "session_id": wake_session.session_id,
-                "limits": wake_session.limits,
-                "starts_session": False,
-            }
-        return BuiltRequest(request=request, wake_meta=wake_meta)
+        return BuiltRequest(request=request)

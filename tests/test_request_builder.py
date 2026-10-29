@@ -168,7 +168,6 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event.get_extra("ds_decision_format"), "marker")
         self.assertIs(event.get_extra("enable_streaming"), False)
         self.assertTrue(event.call_llm)
-        self.assertIsNone(built.wake_meta)
 
     async def test_request_llm_rejects_removed_func_tool_argument(self):
         event = FakeEvent()
@@ -324,7 +323,7 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("当前图", built.request.prompt)
         self.assertIn("等待图", built.request.prompt)
 
-    async def test_caption_is_optional(self):
+    async def test_caption_covers_normal_requests_too(self):
         image = _Image(url="http://img")
         caption = FakeCaption()
         event = FakeEvent([image])
@@ -339,7 +338,9 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
         built = await self._build(
             _builder(caption_service=caption), other_event, config, decision=False
         )
-        self.assertEqual(caption.calls, [])
+        self.assertEqual(caption.calls, [(["http://img"], "p:group:1")])
+        self.assertIn("[图片转述]", built.request.prompt)
+        self.assertIn("一只猫", built.request.prompt)
         self.assertEqual(built.request.image_urls, ["http://img"])
 
         third_event = FakeEvent([image])
@@ -446,7 +447,7 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("old0", built.request.system_prompt)
 
-    async def test_wake_metadata_marks_existing_session(self):
+    async def test_wake_session_keeps_default_prompt_without_final_hint(self):
         limits = WakeLimits(duration_seconds=300, max_replies=5, idle_timeout_seconds=120)
         session = WakeSession(
             limits=limits,
@@ -460,14 +461,7 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
             _builder(), event, _base_config(), wake_session=session
         )
 
-        self.assertEqual(
-            built.wake_meta,
-            {
-                "session_id": "s1",
-                "limits": limits,
-                "starts_session": False,
-            },
-        )
+        self.assertNotIn("[唤醒收尾提示]", built.request.system_prompt)
 
     async def test_wake_final_prompt_is_injected_when_session_starts_and_cap_is_one(self):
         limits = WakeLimits(duration_seconds=300, max_replies=1, idle_timeout_seconds=120)

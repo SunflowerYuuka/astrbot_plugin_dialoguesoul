@@ -10,13 +10,6 @@ from .dialoguesoul.storage.legacy_import import import_legacy_history
 from .dialoguesoul.storage.paths import legacy_history_path, resolve_db_path
 
 
-@register(
-    "dialoguesoul",
-    "SunflowerYuuka",
-    "DialoguesSoul",
-    "1.3.0",
-    "https://github.com/SunflowerYuuka/astrbot_plugin_dialoguesoul",
-)
 class DialoguesSoul(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)

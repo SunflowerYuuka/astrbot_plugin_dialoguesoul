@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 
+from ..logutil import warn_once
+
 
 class CaptionService:
     """图片转述服务：去重、并发受限、带 LRU 缓存。"""
@@ -64,9 +66,16 @@ class CaptionService:
             *(self._one(umo, url) for url in unique), return_exceptions=True
         )
         output: dict[str, str] = {}
+        failed = 0
         for result in results:
             if isinstance(result, Exception):
+                failed += 1
                 continue
             url, text = result
             output[url] = text
+        if failed:
+            warn_once(
+                "dialoguesoul.caption",
+                f"Dialoguesoul: {failed} 张图片转述失败，本次跳过这些图片",
+            )
         return output
