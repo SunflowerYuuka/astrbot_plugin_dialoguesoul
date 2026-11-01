@@ -75,6 +75,12 @@
             "type": "string",
             "_special": "select_provider",
             "default": ""
+          },
+          "timeout_seconds": {
+            "description": "兴趣判断超时（秒）",
+            "hint": "0 表示沿用 decision.aux_timeout_seconds；超时按未通过处理",
+            "type": "int",
+            "default": 0
           }
         }
       },
@@ -169,9 +175,9 @@
       },
       "aux_timeout_seconds": {
         "description": "辅助模型超时（秒）",
-        "hint": "兴趣判断、介入判断、图片转述与摘要等辅助调用共用；超时按未通过处理，0 表示不限",
+        "hint": "兴趣判断、介入判断、图片转述与摘要共用的默认超时；每项可用自己的 timeout_seconds 覆盖，0 表示不限",
         "type": "int",
-        "default": 15
+        "default": 45
       }
     }
   },
@@ -321,6 +327,12 @@
             "hint": "需不大于实际读取的历史条数（decision.max_context_messages 或 context.history_limit），否则摘要不会触发",
             "type": "int",
             "default": 20
+          },
+          "timeout_seconds": {
+            "description": "摘要超时（秒）",
+            "hint": "0 表示沿用 decision.aux_timeout_seconds；超时回退到完整聊天记录",
+            "type": "int",
+            "default": 0
           }
         }
       },
@@ -353,6 +365,12 @@
             "description": "进程内缓存条数",
             "type": "int",
             "default": 128
+          },
+          "timeout_seconds": {
+            "description": "转述超时（秒）",
+            "hint": "0 表示沿用 decision.aux_timeout_seconds；单张图片超时只跳过该图片",
+            "type": "int",
+            "default": 0
           }
         }
       },
@@ -427,6 +445,12 @@
         "hint": "开启后作为介入判断的主要依据，并注入主模型",
         "type": "text",
         "default": ""
+      },
+      "timeout_seconds": {
+        "description": "介入判断超时（秒）",
+        "hint": "0 表示沿用 decision.aux_timeout_seconds；超时按不介入处理并写入限流日志",
+        "type": "int",
+        "default": 0
       }
     }
   },

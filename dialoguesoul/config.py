@@ -13,7 +13,7 @@ DEFAULTS: dict[str, Any] = {
         "strategy": "window",
         "proactive_delay_seconds": 5,
         "window_seconds": 30,
-        "interest": {"enabled": True, "provider_id": ""},
+        "interest": {"enabled": True, "provider_id": "", "timeout_seconds": 0},
         "burst": {
             "enabled": False,
             "groups": [],
@@ -31,7 +31,7 @@ DEFAULTS: dict[str, Any] = {
         "max_context_messages": 20,
         "cooldown_ms": 3000,
         "max_replies_per_minute": 6,
-        "aux_timeout_seconds": 15,
+        "aux_timeout_seconds": 45,
     },
     "wake": {
         "enabled": False,
@@ -58,6 +58,7 @@ DEFAULTS: dict[str, Any] = {
             "enabled": False,
             "provider_id": "",
             "threshold": 20,
+            "timeout_seconds": 0,
         },
         "image_caption": {
             "enabled": False,
@@ -65,6 +66,7 @@ DEFAULTS: dict[str, Any] = {
             "prompt": "请直接简短描述这张图片",
             "concurrency": 3,
             "cache_size": 128,
+            "timeout_seconds": 0,
         },
         "forward": {
             "parse": False,
@@ -75,7 +77,12 @@ DEFAULTS: dict[str, Any] = {
         },
     },
     "persona": {"enabled": True, "name": ""},
-    "extra_prompt": {"enabled": False, "text": "", "provider_id": ""},
+    "extra_prompt": {
+        "enabled": False,
+        "text": "",
+        "provider_id": "",
+        "timeout_seconds": 0,
+    },
     "storage": {"db_path": "", "retention_days": 30, "retention_count": 500},
 }
 

@@ -1,6 +1,6 @@
 # 言灵（DialoguesSoul）
 
-[![version](https://img.shields.io/badge/version-v1.4.0-blue.svg?style=flat-square)](https://github.com/SunflowerYuuka/astrbot_plugin_dialoguesoul)
+[![version](https://img.shields.io/badge/version-v1.4.1-blue.svg?style=flat-square)](https://github.com/SunflowerYuuka/astrbot_plugin_dialoguesoul)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square)](LICENSE)
 
 言灵（DialoguesSoul）是让大模型真正参与群聊的 AstrBot 插件。它负责触发判断、上下文组装、决策解析与唤醒会话；生成、知识库、第三方长期记忆和发送都交给 AstrBot 管线。
@@ -135,7 +135,8 @@
 - `context.image_caption`：可选的图片转述。开启后，插件处理的请求（普通请求与决策请求）都会先调用指定或当前 provider 生成图片描述，并把描述与原始图片一起交给模型；支持并发限制与进程内 LRU 缓存，转述失败会跳过对应图片并限流写入警告日志。
 - `context.forward.parse`：可选的合并转发解析。开启后通过 OneBot `get_forward_msg` 读取当前消息中的合并转发，兼容 `data.text` 结构与嵌套节点，按 `max_depth`、`max_nodes`、`max_chars`、`timeout` 限制展开；失败或空内容时使用占位文本并写入警告日志。
 - `context.summary`：可选的上下文摘要。历史条数达到 `threshold`（默认 20）时调用指定或当前 provider 生成摘要，失败时回退到原始历史。`threshold` 需不大于实际读取的历史条数（`decision.max_context_messages` 或 `context.history_limit`），否则摘要不会触发。
-- `decision.aux_timeout_seconds`：兴趣判断、介入判断、图片转述与摘要等辅助模型调用的超时，默认 15 秒；超时按未通过或回退处理，并以限流日志提示，避免长时间占住该聊天，`0` 表示不限。
+- `decision.aux_timeout_seconds`：辅助模型调用的默认超时，默认 45 秒；超时按未通过或回退处理，并以限流日志写明实际秒数，避免长时间占住该聊天，`0` 表示不限。
+- `trigger.interest.timeout_seconds`、`extra_prompt.timeout_seconds`、`context.image_caption.timeout_seconds`、`context.summary.timeout_seconds`：为单项辅助调用单独设置超时（秒），`0` 表示沿用 `decision.aux_timeout_seconds`。判断类超时按“不通过/不介入”处理，转述与摘要超时按跳过或回退处理。
 - `persona`：从 AstrBot 读取并注入人格；`persona.name` 指定人格名称，留空或找不到时使用默认人格。
 - `extra_prompt`：开启后既作为主动触发/唤醒的介入判断依据，也注入主模型；`extra_prompt.provider_id` 指定判断模型，留空使用当前 provider。关闭时保持原有决策流程。
 - `storage.db_path`：SQLite 路径，留空时使用插件数据目录下的 `dialoguesoul.sqlite3`。

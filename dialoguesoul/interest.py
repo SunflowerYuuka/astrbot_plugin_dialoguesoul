@@ -5,6 +5,11 @@ import asyncio
 from .logutil import warn_once
 
 
+def _seconds(value: float) -> str:
+    """把秒数格式化成 45 这样的短文本，用于日志文案。"""
+    return f"{float(value):g}"
+
+
 class InterestJudge:
     def __init__(
         self,
@@ -37,10 +42,18 @@ class InterestJudge:
             else:
                 response = await call
             return "YES" in (getattr(response, "completion_text", "") or "").upper()
+        except asyncio.TimeoutError:
+            warn_once(
+                f"dialoguesoul.{self.name}.timeout",
+                f"Dialoguesoul: {self.name}超时（{_seconds(self.timeout)} 秒内"
+                "未返回结果），本次按不介入处理；"
+                "可调大 decision.aux_timeout_seconds 或改用更快的判断模型",
+            )
+            return False
         except Exception as exc:
+            detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
             warn_once(
                 f"dialoguesoul.{self.name}",
-                f"Dialoguesoul: {self.name}调用失败"
-                f"（{type(exc).__name__}: {exc}），本次按不介入处理",
+                f"Dialoguesoul: {self.name}调用失败（{detail}），本次按不介入处理",
             )
             return False

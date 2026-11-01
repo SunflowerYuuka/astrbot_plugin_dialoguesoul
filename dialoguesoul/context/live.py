@@ -10,11 +10,31 @@ from .images import CaptionService
 from .summary import SummaryService
 
 
-def aux_timeout(config) -> float:
+AUX_TIMEOUT_DEFAULT = 45.0
+
+
+def _as_seconds(value, fallback: float) -> float:
     try:
-        return float(cfg.get(config, "decision.aux_timeout_seconds", 15) or 0)
+        seconds = float(value)
     except (TypeError, ValueError):
-        return 15.0
+        return fallback
+    return max(0.0, seconds)
+
+
+def aux_timeout(config, path: str = "") -> float:
+    """辅助模型调用的超时（秒），0 表示不限。
+
+    `path` 指向某个辅助功能自己的 `timeout_seconds`；该值为 0 或未配置时
+    回退到全局的 `decision.aux_timeout_seconds`。
+    """
+    if path:
+        own = _as_seconds(cfg.get(config, path, 0), 0.0)
+        if own > 0:
+            return own
+    return _as_seconds(
+        cfg.get(config, "decision.aux_timeout_seconds", AUX_TIMEOUT_DEFAULT),
+        AUX_TIMEOUT_DEFAULT,
+    )
 
 
 async def _call_with_timeout(call, timeout: float):
@@ -60,7 +80,7 @@ def build_caption_service(context, config):
                 ),
                 image_urls=[url],
             ),
-            aux_timeout(config),
+            aux_timeout(config, "context.image_caption.timeout_seconds"),
         )
         return (getattr(response, "completion_text", "") or "").strip()
 
@@ -103,7 +123,7 @@ def build_summary_service(context, config):
                 + fallback,
                 system_prompt="只输出摘要正文。",
             ),
-            aux_timeout(config),
+            aux_timeout(config, "context.summary.timeout_seconds"),
         )
         return (getattr(response, "completion_text", "") or "").strip() or fallback
 
@@ -133,7 +153,10 @@ def build_intervention_judge(context, config):
         )
 
     return InterestJudge(
-        resolver, prompt, timeout=aux_timeout(config), name="附加提示词判断"
+        resolver,
+        prompt,
+        timeout=aux_timeout(config, "extra_prompt.timeout_seconds"),
+        name="附加提示词判断",
     )
 
 
@@ -153,6 +176,6 @@ def build_interest_judge(context, config):
     return InterestJudge(
         resolver,
         "判断这条群聊消息是否值得你像群友一样接话。只输出 YES 或 NO。",
-        timeout=aux_timeout(config),
+        timeout=aux_timeout(config, "trigger.interest.timeout_seconds"),
         name="兴趣判断",
     )

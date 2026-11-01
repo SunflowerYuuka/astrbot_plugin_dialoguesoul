@@ -287,6 +287,134 @@ class LiveServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await service.summarize(messages, "umo", "fallback"), "摘要")
         self.assertEqual(context.used, ["async"])
 
+    async def test_aux_timeout_defaults_and_per_feature_override(self):
+        provider = Provider("YES")
+        context = Context(by_id=provider)
+        event = types.SimpleNamespace(
+            unified_msg_origin="umo",
+            get_message_outline=lambda: "当前消息",
+        )
+
+        # 未配置时统一回退到全局默认值（45 秒）
+        judge = build_intervention_judge(
+            context, {"extra_prompt": {"enabled": True, "text": "规则"}}
+        )
+        self.assertEqual(judge.timeout, 45.0)
+
+        # 单项配置优先于全局配置
+        judge = build_intervention_judge(
+            context,
+            {
+                "decision": {"aux_timeout_seconds": 90},
+                "extra_prompt": {
+                    "enabled": True,
+                    "text": "规则",
+                    "timeout_seconds": 8,
+                },
+            },
+        )
+        self.assertEqual(judge.timeout, 8.0)
+
+        # 0 表示沿用全局配置
+        judge = build_intervention_judge(
+            context,
+            {
+                "decision": {"aux_timeout_seconds": 90},
+                "extra_prompt": {
+                    "enabled": True,
+                    "text": "规则",
+                    "timeout_seconds": 0,
+                },
+            },
+        )
+        self.assertEqual(judge.timeout, 90.0)
+
+        # 全局也可设为 0（不限）
+        judge = build_intervention_judge(
+            context,
+            {
+                "decision": {"aux_timeout_seconds": 0},
+                "extra_prompt": {
+                    "enabled": True,
+                    "text": "规则",
+                    "provider_id": "judge",
+                },
+            },
+        )
+        self.assertEqual(judge.timeout, 0.0)
+        self.assertTrue(await judge(event, "最近聊天"))
+
+    async def test_interest_and_caption_timeout_overrides(self):
+        context = Context(by_id=Provider("YES"))
+        interest = build_interest_judge(
+            context,
+            {
+                "trigger": {
+                    "strategy": "interest",
+                    "interest": {"provider_id": "judge", "timeout_seconds": 7},
+                }
+            },
+        )
+        self.assertEqual(interest.timeout, 7.0)
+
+        config = {
+            "context": {
+                "image_caption": {
+                    "enabled": True,
+                    "provider_id": "vision",
+                    "prompt": "描述图片",
+                    "concurrency": 1,
+                    "cache_size": 4,
+                    "timeout_seconds": 3,
+                }
+            }
+        }
+        service = build_caption_service(context, config)
+        self.assertEqual(
+            await service.caption(["http://img"], umo="umo"), {"http://img": "YES"}
+        )
+
+    async def test_judge_timeout_logs_configured_seconds(self):
+        context = Context(current=SlowProvider())
+        config = {
+            "decision": {"aux_timeout_seconds": 0.01},
+            "extra_prompt": {"enabled": True, "text": "只回复技术问题"},
+        }
+        event = types.SimpleNamespace(
+            unified_msg_origin="umo",
+            get_message_outline=lambda: "当前消息",
+        )
+        judge = build_intervention_judge(context, config)
+
+        with mock.patch("dialoguesoul.interest.warn_once") as warn:
+            self.assertFalse(await judge(event, "最近聊天"))
+
+        warn.assert_called_once()
+        key, message = warn.call_args[0][:2]
+        self.assertEqual(key, "dialoguesoul.附加提示词判断.timeout")
+        self.assertIn("超时", message)
+        self.assertIn("0.01 秒", message)
+        self.assertIn("decision.aux_timeout_seconds", message)
+
+    async def test_judge_failure_without_message_stays_readable(self):
+        class BlankErrorProvider:
+            async def text_chat(self, **kwargs):
+                raise RuntimeError()
+
+        context = Context(by_id=BlankErrorProvider())
+        config = {"extra_prompt": {"enabled": True, "text": "规则", "provider_id": "judge"}}
+        event = types.SimpleNamespace(
+            unified_msg_origin="umo",
+            get_message_outline=lambda: "当前消息",
+        )
+        judge = build_intervention_judge(context, config)
+
+        with mock.patch("dialoguesoul.interest.warn_once") as warn:
+            self.assertFalse(await judge(event, "最近聊天"))
+
+        self.assertIn("RuntimeError", warn.call_args[0][1])
+        self.assertNotIn("RuntimeError: ", warn.call_args[0][1])
+
 
 if __name__ == "__main__":
     unittest.main()

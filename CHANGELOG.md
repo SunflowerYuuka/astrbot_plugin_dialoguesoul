@@ -1,5 +1,16 @@
 # 更新日志
 
+## v1.4.1
+
+### 修复
+
+- 辅助模型超时默认值由 15 秒提高到 45 秒。此前在慢链路下（provider 自身超时为 120 秒），介入判断几乎必然在 15 秒内被掐断，导致开启 `extra_prompt` 后机器人长期"按不介入处理"而不回复。
+- 超时日志改为写明实际秒数与可调项，不再出现 `（TimeoutError: ）` 这种看不出原因的空白异常文本；非超时异常在异常消息为空时只输出异常类型。
+
+### 新增
+
+- 各项辅助调用可单独配置超时：`trigger.interest.timeout_seconds`、`extra_prompt.timeout_seconds`、`context.image_caption.timeout_seconds`、`context.summary.timeout_seconds`，单位秒，`0` 表示沿用 `decision.aux_timeout_seconds`。
+
 ## v1.4.0
 
 ### 修复
