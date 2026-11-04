@@ -648,6 +648,30 @@ class PluginFlowTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(key, plugin._locks)
         self.assertNotIn(key, plugin._lock_seen)
 
+    async def test_keywords_warn_when_strategy_is_not_rules(self):
+        config = _base_config()
+        config["trigger"]["strategy"] = "interest"
+        config["trigger"]["keywords"] = ["开服"]
+
+        with patch("dialoguesoul.plugin.warn_once") as warn:
+            self._plugin(config=config)
+
+        warn.assert_called_once()
+        key, message = warn.call_args[0][:2]
+        self.assertEqual(key, "dialoguesoul.trigger.keywords")
+        self.assertIn("rules", message)
+        self.assertIn("interest", message)
+
+    async def test_keywords_do_not_warn_under_rules_strategy(self):
+        config = _base_config()
+        config["trigger"]["strategy"] = "rules"
+        config["trigger"]["keywords"] = ["开服"]
+
+        with patch("dialoguesoul.plugin.warn_once") as warn:
+            self._plugin(config=config)
+
+        warn.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

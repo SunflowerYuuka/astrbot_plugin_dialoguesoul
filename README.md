@@ -1,6 +1,6 @@
 # 言灵（DialoguesSoul）
 
-[![version](https://img.shields.io/badge/version-v1.4.1-blue.svg?style=flat-square)](https://github.com/SunflowerYuuka/astrbot_plugin_dialoguesoul)
+[![version](https://img.shields.io/badge/version-v1.4.2-blue.svg?style=flat-square)](https://github.com/SunflowerYuuka/astrbot_plugin_dialoguesoul)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square)](LICENSE)
 
 言灵（DialoguesSoul）是让大模型真正参与群聊的 AstrBot 插件。它负责触发判断、上下文组装、决策解析与唤醒会话；生成、知识库、第三方长期记忆和发送都交给 AstrBot 管线。
@@ -79,7 +79,8 @@
 - 唤醒会话活跃时，通过硬门控的消息进入唤醒流程，不受窗口或兴趣策略限制；非直接 @ 的消息同样先经过附加提示词判断，刷屏保护期间暂停。
 - `trigger.burst` 可对指定群启用刷屏保护：30 秒内消息达到阈值后暂停自主采样与唤醒采样，安静 `cooldown_seconds` 后恢复；直接 @ 仍可触发。`threshold` 与 `cooldown_seconds` 是全局配置，对所有启用了刷屏保护的群生效。
 - `trigger.ignored_prefixes` 默认忽略 `/`，避免 `/ds help` 等指令消息额外触发一次模型回复；判断时使用去掉 At/回复段后的文本，所以 `@机器人 /ds help` 也会被忽略。自定义 AstrBot 唤醒前缀时请同步加入。
-- `trigger.probability` 与 `trigger.keywords` 仅在 `rules` 策略下参与触发判定；`trigger.blacklist_keywords`、`trigger.ignored_prefixes` 对所有策略生效。
+- `trigger.probability` 与 `trigger.keywords` 仅在 `rules` 策略下参与触发判定；`trigger.blacklist_keywords`、`trigger.ignored_prefixes` 对所有策略生效。在其它策略下配置了 `trigger.keywords` 时，插件启动会写入一条警告日志提示这些关键词不会生效。
+- 兴趣判断与附加提示词判断的提示词里会带上**当前消息的发送者（昵称与 QQ 号）**以及**机器人自身 id**，因此规则中的「先辨认发送者 / 艾特对象 / 引用对象」可以被真正执行；当前消息中的 `[At:数字]`、`[引用消息(...)]` 即 AstrBot 的消息概要占位符。
 
 ## 决策格式
 

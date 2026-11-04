@@ -21,6 +21,7 @@ from .context.persona import resolve_persona_prompt
 from .context.prompt import format_history
 from .gate import Gate
 from .hooks import Hooks
+from .logutil import warn_once
 from .models import ChatKey
 from .request_builder import RequestBuilder, history_limit
 from .strategy import StrategyEngine
@@ -90,6 +91,25 @@ class DialoguesSoulPlugin:
         self._locks = {}
         self._lock_seen = {}
         self._delay_cancels = {}
+        self._warn_unused_trigger_config()
+
+    def _warn_unused_trigger_config(self) -> None:
+        """关键词/概率只在 rules 策略下参与判定，配了却不用时报一次警。"""
+        strategy = cfg.get(self.config, "trigger.strategy", "window")
+        if strategy == "rules":
+            return
+        keywords = [
+            str(word).strip()
+            for word in (cfg.get(self.config, "trigger.keywords", []) or [])
+            if str(word).strip()
+        ]
+        if not keywords:
+            return
+        warn_once(
+            "dialoguesoul.trigger.keywords",
+            f"Dialoguesoul: 已配置 trigger.keywords，但 trigger.strategy 是 {strategy}，"
+            "关键词不会参与触发判定；需要按关键词触发请改用 rules 策略",
+        )
 
     async def close(self):
         return None

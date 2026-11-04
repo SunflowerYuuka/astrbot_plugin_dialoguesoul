@@ -415,6 +415,43 @@ class LiveServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("RuntimeError", warn.call_args[0][1])
         self.assertNotIn("RuntimeError: ", warn.call_args[0][1])
 
+    async def test_judge_prompt_includes_sender_and_self_id(self):
+        provider = Provider("YES")
+        context = Context(by_id=provider)
+        config = {"extra_prompt": {"enabled": True, "text": "规则", "provider_id": "judge"}}
+        event = types.SimpleNamespace(
+            unified_msg_origin="umo",
+            get_message_outline=lambda: "[At:10002] 这张图哪来的",
+            get_sender_id=lambda: "20001",
+            get_sender_name=lambda: "群友A",
+            get_self_id=lambda: "10001",
+        )
+
+        judge = build_intervention_judge(context, config)
+        prompt = judge.build_prompt(event, "1. 群友B(20002): 在吗")
+
+        # 判断模型必须知道当前消息是谁发的，以及自己是谁，否则「辨认发送者/艾特对象」的规则无法执行
+        self.assertIn("群友A(20001): [At:10002] 这张图哪来的", prompt)
+        self.assertIn("10001", prompt)
+        self.assertIn("[At:10002]", prompt)
+        self.assertIn("1. 群友B(20002): 在吗", prompt)
+
+    async def test_judge_prompt_degrades_without_sender_fields(self):
+        provider = Provider("YES")
+        context = Context(by_id=provider)
+        config = {"extra_prompt": {"enabled": True, "text": "规则", "provider_id": "judge"}}
+        event = types.SimpleNamespace(
+            unified_msg_origin="umo",
+            get_message_outline=lambda: "普通消息",
+        )
+
+        judge = build_intervention_judge(context, config)
+        prompt = judge.build_prompt(event, "记录")
+
+        self.assertIn("当前消息：普通消息", prompt)
+        self.assertNotIn("None", prompt)
+        self.assertTrue(await judge(event, "记录"))
+
 
 if __name__ == "__main__":
     unittest.main()
