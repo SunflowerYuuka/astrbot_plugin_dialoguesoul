@@ -371,6 +371,12 @@
             "hint": "0 表示沿用 decision.aux_timeout_seconds；单张图片超时只跳过该图片",
             "type": "int",
             "default": 0
+          },
+          "history_messages": {
+            "description": "为历史图片补转述的条数",
+            "hint": "0 表示不转述历史图片（只转述当前消息的图片）；设为 N 时会把最近 N 条历史里的图片一并转述并写进聊天记录，便于模型理解上下文，但会增加模型调用",
+            "type": "int",
+            "default": 0
           }
         }
       },

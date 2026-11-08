@@ -154,7 +154,8 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
         event = FakeEvent()
         built = await self._build(_builder(), event, _base_config())
 
-        self.assertTrue(built.request.prompt.startswith("hello"))
+        # 群聊里当前消息带上发送者，模型才知道是谁在说话
+        self.assertEqual(built.request.prompt, "U(u): hello")
         self.assertIn("[参与判断]", built.request.system_prompt)
         self.assertNotIn("决策协议", built.request.system_prompt)
         self.assertIn("persona", built.request.system_prompt)
@@ -248,7 +249,7 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
             _builder(), event, _base_config(), decision=False
         )
 
-        self.assertTrue(built.request.prompt.startswith("hello"))
+        self.assertTrue(built.request.prompt.startswith("U(u): hello"))
         self.assertNotIn("决策协议", built.request.system_prompt)
         self.assertNotIn("[参与判断]", built.request.system_prompt)
         self.assertEqual(event.get_extra("ds_request_kind"), "normal")
@@ -330,7 +331,7 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
 
         built = await self._build(_builder(caption_service=caption), event, _base_config())
         self.assertEqual(caption.calls, [])
-        self.assertEqual(built.request.prompt, "[非文本消息]")
+        self.assertEqual(built.request.prompt, "U(u): [图片]")
 
         config = _base_config()
         config["context"]["image_caption"]["enabled"] = True
@@ -345,7 +346,63 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
 
         third_event = FakeEvent([image])
         built = await self._build(_builder(), third_event, config)
-        self.assertEqual(built.request.prompt, "[非文本消息]")
+        self.assertEqual(built.request.prompt, "U(u): [图片]")
+
+    async def test_history_images_are_captioned_when_window_enabled(self):
+        history = [
+            ChatMessage(
+                "p", "bot", "group", "1", f"m{i}", "u", "U", float(i),
+                [{"type": "plain", "text": "看图"}, {"type": "image", "url": f"http://h{i}"}],
+            )
+            for i in range(3)
+        ]
+        repo = FakeRepo(history)
+        caption = FakeCaption({"http://h1": "图一", "http://h2": "图二"})
+        config = _base_config()
+        config["context"]["image_caption"] = {
+            "enabled": True,
+            "history_messages": 2,
+        }
+
+        built = await self._build(
+            _builder(repo=repo, caption_service=caption), FakeEvent(), config
+        )
+
+        # 只转述最近 2 条历史里的图片
+        self.assertEqual(caption.calls, [(["http://h1", "http://h2"], "p:group:1")])
+        self.assertIn("[图片:图二]", built.request.system_prompt)
+        self.assertNotIn("http://h0", built.request.system_prompt)
+
+    async def test_history_images_not_captioned_by_default(self):
+        history = [
+            ChatMessage(
+                "p", "bot", "group", "1", "m0", "u", "U", 0.0,
+                [{"type": "image", "url": "http://h0"}],
+            )
+        ]
+        caption = FakeCaption({"http://h0": "图零"})
+        config = _base_config()
+        config["context"]["image_caption"]["enabled"] = True
+
+        built = await self._build(
+            _builder(repo=FakeRepo(history), caption_service=caption),
+            FakeEvent(),
+            config,
+        )
+
+        self.assertEqual(caption.calls, [])
+        self.assertIn("[图片]", built.request.system_prompt)
+
+    async def test_private_chat_prompt_has_no_sender_prefix(self):
+        class PrivateEvent(FakeEvent):
+            def is_private_chat(self):
+                return True
+
+            def get_group_id(self):
+                return None
+
+        built = await self._build(_builder(), PrivateEvent(), _base_config())
+        self.assertEqual(built.request.prompt, "hello")
 
     async def test_forward_is_rendered_when_enabled(self):
         forward = _Forward(id="f1")

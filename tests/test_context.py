@@ -1,3 +1,4 @@
+import time
 import types
 import unittest
 
@@ -69,7 +70,47 @@ class ContextTest(unittest.TestCase):
 
     def test_format_history_marks_non_text(self):
         text = format_history([_message(1, [{"type": "image", "url": "http://img"}])])
-        self.assertIn("[非文本消息]", text)
+        self.assertIn("[图片]", text)
+        self.assertNotIn("[非文本消息]", text)
+
+    def test_format_history_renders_placeholders(self):
+        components = [
+            {"type": "reply"},
+            {"type": "plain", "text": "看图"},
+            {"type": "image", "url": "http://img"},
+            {"type": "at", "qq": "123"},
+            {"type": "face"},
+        ]
+        text = format_history([_message(1, components)])
+        for expected in ("[引用]", "看图", "[图片]", "[At:123]", "[表情]"):
+            self.assertIn(expected, text)
+
+    def test_format_history_carries_timestamps(self):
+        today = time.localtime()
+        same_day = time.mktime(
+            (today.tm_year, today.tm_mon, today.tm_mday, 9, 30, 15, 0, 0, -1)
+        )
+        message = ChatMessage(
+            "p", "bot", "group", "1", "m1", "u", "U", same_day,
+            [{"type": "plain", "text": "a"}],
+        )
+        text = format_history([message])
+        self.assertIn("09:30:15", text)
+
+    def test_format_history_uses_captions_for_history_images(self):
+        message = _message(1, [{"type": "image", "url": "http://img"}])
+        text = format_history([message], captions={"http://img": "一只猫"})
+        self.assertIn("[图片:一只猫]", text)
+
+    def test_environment_carries_current_time(self):
+        event = types.SimpleNamespace(
+            get_self_id=lambda: "bot",
+            is_private_chat=lambda: False,
+            get_group_id=lambda: "1",
+            get_sender_id=lambda: "u",
+        )
+        text = build_environment(event)
+        self.assertIn("当前时间", text)
 
     def test_system_prompt_contains_decision(self):
         text = build_system_prompt("persona", "env", "history", "extra", decision=True)

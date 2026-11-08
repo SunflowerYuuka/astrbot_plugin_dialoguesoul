@@ -1,6 +1,6 @@
 # 言灵（DialoguesSoul）
 
-[![version](https://img.shields.io/badge/version-v1.4.2-blue.svg?style=flat-square)](https://github.com/SunflowerYuuka/astrbot_plugin_dialoguesoul)
+[![version](https://img.shields.io/badge/version-v1.4.3-blue.svg?style=flat-square)](https://github.com/SunflowerYuuka/astrbot_plugin_dialoguesoul)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square)](LICENSE)
 
 言灵（DialoguesSoul）是让大模型真正参与群聊的 AstrBot 插件。它负责触发判断、上下文组装、决策解析与唤醒会话；生成、知识库、第三方长期记忆和发送都交给 AstrBot 管线。
@@ -133,6 +133,8 @@
 
 - `context.history_limit`：普通请求读取的最近历史条数，默认 20。
 - `decision.max_context_messages`：决策请求读取的最近历史条数，默认 20。当前触发消息本身会作为 prompt 发送，因此会从历史中排除，避免重复。
+- 聊天记录的渲染：每条带 `编号 + 时间 + 昵称(QQ号) + 内容`，非文本内容用占位符（`[图片]`、`[表情]`、`[引用]`、`[合并转发]` 等），不再统一写成 `[非文本消息]`；群聊里当前触发消息也会带上发送者。时间对于模型判断"这是刚发生的还是几分钟前的旧话题"很关键，去掉它容易出现答非所问或突然插话。
+- `context.image_caption.history_messages`：为历史图片补转述的条数，默认 `0`（只转述当前消息的图片）。设为 `N` 时会把最近 N 条历史里的图片一并转述并写进聊天记录，模型能看懂上下文里的图；代价是每条新图片都会多一次模型调用。
 - `context.image_caption`：可选的图片转述。开启后，插件处理的请求（普通请求与决策请求）都会先调用指定或当前 provider 生成图片描述，并把描述与原始图片一起交给模型；支持并发限制与进程内 LRU 缓存，转述失败会跳过对应图片并限流写入警告日志。
 - `context.forward.parse`：可选的合并转发解析。开启后通过 OneBot `get_forward_msg` 读取当前消息中的合并转发，兼容 `data.text` 结构与嵌套节点，按 `max_depth`、`max_nodes`、`max_chars`、`timeout` 限制展开；失败或空内容时使用占位文本并写入警告日志。
 - `context.summary`：可选的上下文摘要。历史条数达到 `threshold`（默认 20）时调用指定或当前 provider 生成摘要，失败时回退到原始历史。`threshold` 需不大于实际读取的历史条数（`decision.max_context_messages` 或 `context.history_limit`），否则摘要不会触发。

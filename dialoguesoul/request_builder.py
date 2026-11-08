@@ -13,6 +13,7 @@ from .context.prompt import (
     build_environment,
     build_system_prompt,
     format_history,
+    sender_label,
 )
 from .decision import build_reply_instruction
 from .models import ChatKey
@@ -43,6 +44,25 @@ class RequestBuilder:
         self.forward_renderer = forward_renderer
         self.summary_service = summary_service
 
+    async def _caption_history(self, history, caption, config, enabled, event):
+        """为最近若干条历史里的图片补转述，默认关闭以免额外开销。"""
+        if caption is None or not enabled:
+            return {}
+        try:
+            window = int(
+                cfg.get(config, "context.image_caption.history_messages", 0) or 0
+            )
+        except (TypeError, ValueError):
+            window = 0
+        if window <= 0:
+            return {}
+        urls = []
+        for message in history[-window:]:
+            urls.extend(collect_image_urls(message.components))
+        if not urls:
+            return {}
+        return await caption.caption(urls, umo=event.unified_msg_origin)
+
     async def build(
         self,
         event,
@@ -65,7 +85,14 @@ class RequestBuilder:
         history = exclude_current_message(
             await self.repo.recent(*key.as_tuple(), limit), event
         )
-        history_text = format_history(history)
+        caption = caption_service or self.caption_service
+        caption_enabled = bool(
+            cfg.get(config, "context.image_caption.enabled", False)
+        )
+        caption_map = await self._caption_history(
+            history, caption, config, caption_enabled, event
+        )
+        history_text = format_history(history, captions=caption_map)
         history_map = {
             index: {"id": message.message_id, "sender_id": message.sender_id}
             for index, message in enumerate(history, start=1)
@@ -89,12 +116,16 @@ class RequestBuilder:
                 image_urls.append(url)
                 seen_urls.add(url)
 
-        segments = [current_text] if current_text else []
-        caption = caption_service or self.caption_service
+        # 图片消息没有正文时也要给出可读内容，避免模型只看到 "[非文本消息]"
+        current_block = current_text or ("[图片]" if image_urls else "")
+        segments = []
+        if current_block:
+            label = "" if event.is_private_chat() else sender_label(event)
+            segments = [f"{label}: {current_block}" if label else current_block]
         if (
             image_urls
             and caption is not None
-            and cfg.get(config, "context.image_caption.enabled", False)
+            and caption_enabled
         ):
             captions = await caption.caption(
                 image_urls, umo=event.unified_msg_origin

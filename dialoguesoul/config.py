@@ -67,6 +67,7 @@ DEFAULTS: dict[str, Any] = {
             "concurrency": 3,
             "cache_size": 128,
             "timeout_seconds": 0,
+            "history_messages": 0,
         },
         "forward": {
             "parse": False,
