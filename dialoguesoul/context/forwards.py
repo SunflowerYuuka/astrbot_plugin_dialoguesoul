@@ -88,14 +88,29 @@ def _segment_type(segment) -> str:
     return str(value or "").strip().lower()
 
 
-def _segment_text(segment) -> str:
+def _image_source(segment) -> str:
+    """取出图片段落的可下载地址，供转述使用。"""
+    segment = _as_dict(segment)
+    data = _as_dict(segment.get("data"))
+    for source in (data, segment):
+        for name in ("url", "file", "path"):
+            value = source.get(name)
+            if value:
+                return str(value)
+    return ""
+
+
+def _segment_text(segment, captions=None) -> str:
     segment = _as_dict(segment)
     data = _as_dict(segment.get("data"))
     kind = _segment_type(segment)
     if kind in ("text", "plain"):
         return str(segment.get("text", data.get("text", "")))
     if kind == "image":
-        return "[图片]"
+        caption = ""
+        if captions:
+            caption = str(captions.get(_image_source(segment), "") or "").strip()
+        return f"[图片:{caption}]" if caption else "[图片]"
     if kind == "at":
         return f"@{data.get('qq') or segment.get('qq') or ''}"
     if kind == "face":
@@ -149,16 +164,46 @@ class ForwardRenderer:
         max_nodes: int = 50,
         max_chars: int = 2000,
         timeout: float = 5,
+        captioner=None,
     ):
         self.fetcher = fetcher
         self.max_depth = max_depth
         self.max_nodes = max_nodes
         self.max_chars = max_chars
         self.timeout = timeout
+        self.captioner = captioner
 
-    def _line(self, item) -> str:
-        text = "".join(_segment_text(segment) for segment in _content(item))
+    def _line(self, item, captions=None) -> str:
+        text = "".join(_segment_text(segment, captions) for segment in _content(item))
         return f"{_sender_name(item)}: {text}"
+
+    def _image_urls(self, messages: list, depth: int = 0, found=None) -> list[str]:
+        """收集转发内容里所有图片地址，去重后供一次批量转述。"""
+        found = [] if found is None else found
+        for item in messages:
+            for segment in _content(item):
+                if _segment_type(segment) == "image":
+                    url = _image_source(segment)
+                    if url and url not in found:
+                        found.append(url)
+            nested = self._nested(item, depth)
+            if nested and depth + 1 < self.max_depth:
+                self._image_urls(nested, depth + 1, found)
+        return found
+
+    async def _captions(self, messages: list) -> dict:
+        if self.captioner is None:
+            return {}
+        try:
+            urls = self._image_urls(messages)
+            if not urls:
+                return {}
+            result = self.captioner(urls)
+            if inspect.isawaitable(result):
+                result = await result
+            return result if isinstance(result, dict) else {}
+        except Exception:
+            return {}
 
     def _nested(self, item, depth: int) -> list:
         if depth + 1 >= self.max_depth or not isinstance(item, dict):
@@ -190,7 +235,7 @@ class ForwardRenderer:
             total += self._count(child, depth + 1)
         return total
 
-    def _lines(self, messages: list, depth: int, budget: list) -> list[str]:
+    def _lines(self, messages: list, depth: int, budget: list, captions=None) -> list[str]:
         lines: list[str] = []
         pad = "  " * depth
         for item in messages:
@@ -198,10 +243,10 @@ class ForwardRenderer:
                 budget[1] += self._count(item, depth)
                 continue
             budget[0] -= 1
-            lines.append(pad + self._line(item))
+            lines.append(pad + self._line(item, captions))
             nested = self._nested(item, depth)
             if nested:
-                lines.extend(self._lines(nested, depth + 1, budget))
+                lines.extend(self._lines(nested, depth + 1, budget, captions))
         return lines
 
     async def render(self, forward_id: str) -> str:
@@ -214,8 +259,9 @@ class ForwardRenderer:
         if not messages:
             self._log_failure(forward_id, "empty payload")
             return "[合并转发: 无内容]"
+        captions = await self._captions(messages)
         budget = [self.max_nodes, 0]
-        text = "\n".join(self._lines(messages, 0, budget))
+        text = "\n".join(self._lines(messages, 0, budget, captions))
         if budget[1] > 0:
             text += f"\n(还有 {budget[1]} 条未显示)"
         return text[: self.max_chars]

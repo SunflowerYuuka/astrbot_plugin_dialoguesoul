@@ -61,9 +61,18 @@ def sender_label(event) -> str:
     return name or sender_id
 
 
-def render_components(components, captions: dict | None = None) -> str:
-    """把组件列表渲染成一行文本，非文本组件用可读占位符。"""
+def render_components(
+    components,
+    captions: dict | None = None,
+    forwards: dict | None = None,
+) -> str:
+    """把组件列表渲染成一行文本，非文本组件用可读占位符。
+
+    `captions` 为图片地址到转述文本的映射，`forwards` 为转发 id 到已展开
+    正文的映射；没有对应内容时退回占位符。
+    """
     captions = captions or {}
+    forwards = forwards or {}
     parts: list[str] = []
     for component in components or []:
         if not isinstance(component, dict):
@@ -82,6 +91,9 @@ def render_components(components, captions: dict | None = None) -> str:
         elif kind == "at":
             qq = str(component.get("qq", "") or "").strip()
             parts.append(f"[At:{qq}]" if qq else "[At]")
+        elif kind == "forward":
+            body = str(forwards.get(str(component.get("id") or ""), "") or "").strip()
+            parts.append("[合并转发]\n" + body if body else "[合并转发]")
         elif kind == "file":
             name = str(component.get("name", "") or "").strip()
             parts.append(f"[文件:{name}]" if name else "[文件]")
@@ -94,6 +106,7 @@ def format_history(
     messages: list[ChatMessage],
     now=None,
     captions: dict | None = None,
+    forwards: dict | None = None,
 ) -> str:
     """渲染聊天记录：编号 + 时间 + 发送者 + 内容。
 
@@ -102,9 +115,12 @@ def format_history(
     """
     lines = []
     for index, message in enumerate(messages, start=1):
-        text = render_components(message.components, captions)
+        text = render_components(message.components, captions, forwards)
         if not text:
             text = "[非文本消息]"
+        elif "\n" in text:
+            head, *rest = text.split("\n")
+            text = head + "".join("\n      " + line for line in rest)
         clock = _clock(message.timestamp, now)
         prefix = f"{index}. {clock} " if clock else f"{index}. "
         name = message.sender_name or message.sender_id

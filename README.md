@@ -1,6 +1,6 @@
 # 言灵（DialoguesSoul）
 
-[![version](https://img.shields.io/badge/version-v1.4.3-blue.svg?style=flat-square)](https://github.com/SunflowerYuuka/astrbot_plugin_dialoguesoul)
+[![version](https://img.shields.io/badge/version-v1.4.4-blue.svg?style=flat-square)](https://github.com/SunflowerYuuka/astrbot_plugin_dialoguesoul)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square)](LICENSE)
 
 言灵（DialoguesSoul）是让大模型真正参与群聊的 AstrBot 插件。它负责触发判断、上下文组装、决策解析与唤醒会话；生成、知识库、第三方长期记忆和发送都交给 AstrBot 管线。
@@ -136,7 +136,9 @@
 - 聊天记录的渲染：每条带 `编号 + 时间 + 昵称(QQ号) + 内容`，非文本内容用占位符（`[图片]`、`[表情]`、`[引用]`、`[合并转发]` 等），不再统一写成 `[非文本消息]`；群聊里当前触发消息也会带上发送者。时间对于模型判断"这是刚发生的还是几分钟前的旧话题"很关键，去掉它容易出现答非所问或突然插话。
 - `context.image_caption.history_messages`：为历史图片补转述的条数，默认 `0`（只转述当前消息的图片）。设为 `N` 时会把最近 N 条历史里的图片一并转述并写进聊天记录，模型能看懂上下文里的图；代价是每条新图片都会多一次模型调用。
 - `context.image_caption`：可选的图片转述。开启后，插件处理的请求（普通请求与决策请求）都会先调用指定或当前 provider 生成图片描述，并把描述与原始图片一起交给模型；支持并发限制与进程内 LRU 缓存，转述失败会跳过对应图片并限流写入警告日志。
-- `context.forward.parse`：可选的合并转发解析。开启后通过 OneBot `get_forward_msg` 读取当前消息中的合并转发，兼容 `data.text` 结构与嵌套节点，按 `max_depth`、`max_nodes`、`max_chars`、`timeout` 限制展开；失败或空内容时使用占位文本并写入警告日志。
+- `context.forward.parse`：可选的合并转发解析，控制**当前消息**里的合并转发是否展开为正文。开启后通过 OneBot `get_forward_msg` 读取内容，兼容 `data.text` 结构与嵌套节点，按 `max_depth`、`max_nodes`、`max_chars`、`timeout` 限制展开；失败或空内容时使用占位文本并写入警告日志。
+- `context.forward.history_messages`：展开**历史**转发的条数，默认 `0`（历史里的转发只显示 `[合并转发]`）。设为 `N` 时会把最近 N 条历史消息里的合并转发一并用 `get_forward_msg` 展开并写进聊天记录，模型才能读到历史转发的内容；每条历史转发多一次接口调用。它与 `context.forward.parse` 相互独立，只开这一项也会构建渲染器。
+- `context.forward.caption_images`：是否转述转发内容里的图片，默认关闭（只显示 `[图片]`）。需要同时开启 `context.image_caption.enabled`；开启后转发里的图片会批量交给转述模型，命中缓存的显示为 `[图片:描述]`。
 - `context.summary`：可选的上下文摘要。历史条数达到 `threshold`（默认 20）时调用指定或当前 provider 生成摘要，失败时回退到原始历史。`threshold` 需不大于实际读取的历史条数（`decision.max_context_messages` 或 `context.history_limit`），否则摘要不会触发。
 - `decision.aux_timeout_seconds`：辅助模型调用的默认超时，默认 45 秒；超时按未通过或回退处理，并以限流日志写明实际秒数，避免长时间占住该聊天，`0` 表示不限。
 - `trigger.interest.timeout_seconds`、`extra_prompt.timeout_seconds`、`context.image_caption.timeout_seconds`、`context.summary.timeout_seconds`：为单项辅助调用单独设置超时（秒），`0` 表示沿用 `decision.aux_timeout_seconds`。判断类超时按“不通过/不介入”处理，转述与摘要超时按跳过或回退处理。

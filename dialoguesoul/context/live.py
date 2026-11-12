@@ -91,12 +91,34 @@ def build_caption_service(context, config):
     )
 
 
-def build_forward_renderer(event, config):
-    if not cfg.get(config, "context.forward.parse", False):
+def build_forward_renderer(event, config, caption_service=None):
+    """按配置构建转发渲染器。
+
+    `context.forward.parse` 控制当前消息里的转发是否展开；
+    `context.forward.history_messages` 控制历史里的转发是否展开。
+    两者都为 0/关闭时返回 None。
+    """
+    parse = bool(cfg.get(config, "context.forward.parse", False))
+    try:
+        history_window = int(
+            cfg.get(config, "context.forward.history_messages", 0) or 0
+        )
+    except (TypeError, ValueError):
+        history_window = 0
+    if not parse and history_window <= 0:
         return None
 
     async def fetcher(forward_id: str):
         return await fetch_forward_payload(event, forward_id)
+
+    captioner = None
+    if caption_service is not None and cfg.get(
+        config, "context.forward.caption_images", False
+    ):
+        umo = getattr(event, "unified_msg_origin", "")
+
+        async def captioner(urls, _umo=umo):
+            return await caption_service.caption(urls, umo=_umo)
 
     return ForwardRenderer(
         fetcher,
@@ -104,6 +126,7 @@ def build_forward_renderer(event, config):
         max_nodes=cfg.get(config, "context.forward.max_nodes", 50),
         max_chars=cfg.get(config, "context.forward.max_chars", 2000),
         timeout=cfg.get(config, "context.forward.timeout", 5),
+        captioner=captioner,
     )
 
 

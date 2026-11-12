@@ -386,6 +386,19 @@
         "items": {
           "parse": {
             "description": "解析合并转发",
+            "hint": "控制当前消息里的合并转发是否展开为正文",
+            "type": "bool",
+            "default": false
+          },
+          "history_messages": {
+            "description": "展开历史转发的条数",
+            "hint": "0 表示只处理当前消息里的转发；设为 N 时会把最近 N 条历史消息里的合并转发一并展开并写进聊天记录，模型才能读到历史转发的内容，代价是每条历史转发多一次接口调用",
+            "type": "int",
+            "default": 0
+          },
+          "caption_images": {
+            "description": "转述转发内的图片",
+            "hint": "需要同时开启 context.image_caption.enabled；开启后会把转发内容里的图片也交给转述模型，否则只显示 [图片]",
             "type": "bool",
             "default": false
           },

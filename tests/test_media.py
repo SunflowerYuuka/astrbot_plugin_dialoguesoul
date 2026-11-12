@@ -210,6 +210,66 @@ class ForwardRendererTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("U: hello", text)
         self.assertIn("[图片]", text)
 
+    async def test_forward_render_captions_images_when_captioner_given(self):
+        async def fetcher(forward_id):
+            return {
+                "messages": [
+                    {
+                        "sender": {"nickname": "U"},
+                        "content": [
+                            {"type": "text", "data": {"text": "看图"}},
+                            {"type": "image", "data": {"url": "http://a"}},
+                            {"type": "image", "data": {"url": "http://b"}},
+                        ],
+                    }
+                ]
+            }
+
+        seen = []
+
+        async def captioner(urls):
+            seen.append(list(urls))
+            return {"http://a": "一只猫"}
+
+        text = await ForwardRenderer(fetcher, captioner=captioner).render("f1")
+
+        # 一次批量转述，命中缓存的显示转述，未命中的仍保留占位符
+        self.assertEqual(seen, [["http://a", "http://b"]])
+        self.assertIn("[图片:一只猫]", text)
+        self.assertIn("[图片]", text)
+
+    async def test_forward_render_without_captioner_keeps_placeholder(self):
+        async def fetcher(forward_id):
+            return {
+                "messages": [
+                    {
+                        "sender": {"nickname": "U"},
+                        "content": [{"type": "image", "data": {"url": "http://a"}}],
+                    }
+                ]
+            }
+
+        text = await ForwardRenderer(fetcher).render("f1")
+        self.assertIn("[图片]", text)
+        self.assertNotIn("[图片:", text)
+
+    async def test_forward_render_survives_captioner_error(self):
+        async def fetcher(forward_id):
+            return {
+                "messages": [
+                    {
+                        "sender": {"nickname": "U"},
+                        "content": [{"type": "image", "data": {"url": "http://a"}}],
+                    }
+                ]
+            }
+
+        async def boom(urls):
+            raise RuntimeError("caption down")
+
+        text = await ForwardRenderer(fetcher, captioner=boom).render("f1")
+        self.assertIn("[图片]", text)
+
     async def test_forward_render_unwraps_data_and_node_items(self):
         async def fetcher(forward_id):
             return {

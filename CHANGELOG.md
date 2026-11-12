@@ -1,5 +1,19 @@
 # 更新日志
 
+## v1.4.4
+
+### 修复
+
+- 历史里的合并转发可以读取正文了：此前只有当前消息里的转发会被展开，历史里的转发在聊天记录中永远只是一个 `[合并转发]` 占位符，模型完全读不到转发内容。新增 `context.forward.history_messages`（默认 `0`，设为 N 则展开最近 N 条历史里的转发），展开后的正文以缩进形式写进聊天记录。
+- 只开 `context.forward.history_messages` 也会构建转发渲染器。此前渲染器只在 `context.forward.parse` 为真时创建，导致"想读历史转发但不展开当前消息"的配置完全无效。
+- 转发内容里的图片可以转述了：新增 `context.forward.caption_images`（默认关闭，需同时开启 `context.image_caption.enabled`）。此前转发里的图片一律只显示 `[图片]`，即使开了图片转述也读不到。
+- 转发渲染器遇到转述失败不会影响正文输出，仍按占位符降级。
+
+### 新增
+
+- `context.forward.history_messages`：展开历史转发的条数。
+- `context.forward.caption_images`：是否转述转发内的图片。
+
 ## v1.4.3
 
 ### 修复

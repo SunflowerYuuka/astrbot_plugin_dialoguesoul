@@ -102,6 +102,20 @@ class ContextTest(unittest.TestCase):
         text = format_history([message], captions={"http://img": "一只猫"})
         self.assertIn("[图片:一只猫]", text)
 
+    def test_format_history_inlines_forward_body(self):
+        message = _message(1, [{"type": "plain", "text": "看这个"}, {"type": "forward", "id": "f1"}])
+        text = format_history([message], forwards={"f1": "甲: 第一句\n乙: 第二句"})
+        self.assertIn("[合并转发]", text)
+        self.assertIn("甲: 第一句", text)
+        # 正文缩进到下一行，保持编号行可读
+        self.assertIn("\n      乙: 第二句", text)
+
+    def test_format_history_keeps_forward_placeholder_without_body(self):
+        message = _message(1, [{"type": "forward", "id": "f1"}])
+        text = format_history([message])
+        self.assertIn("[合并转发]", text)
+        self.assertNotIn(": 第一句", text)
+
     def test_environment_carries_current_time(self):
         event = types.SimpleNamespace(
             get_self_id=lambda: "bot",

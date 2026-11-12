@@ -63,6 +63,31 @@ class RequestBuilder:
             return {}
         return await caption.caption(urls, umo=event.unified_msg_origin)
 
+    async def _render_history_forwards(self, history, renderer, config):
+        """展开最近若干条历史里的合并转发正文，默认关闭以免额外开销。"""
+        if renderer is None:
+            return {}
+        try:
+            window = int(
+                cfg.get(config, "context.forward.history_messages", 0) or 0
+            )
+        except (TypeError, ValueError):
+            window = 0
+        if window <= 0:
+            return {}
+        ids: list[str] = []
+        for message in history[-window:]:
+            for forward_id in collect_forward_ids(message.components):
+                if forward_id not in ids:
+                    ids.append(forward_id)
+        rendered: dict[str, str] = {}
+        for forward_id in ids:
+            try:
+                rendered[forward_id] = await renderer.render(forward_id)
+            except Exception:
+                continue
+        return rendered
+
     async def build(
         self,
         event,
@@ -92,7 +117,12 @@ class RequestBuilder:
         caption_map = await self._caption_history(
             history, caption, config, caption_enabled, event
         )
-        history_text = format_history(history, captions=caption_map)
+        history_forwards = await self._render_history_forwards(
+            history, forward_renderer or self.forward_renderer, config
+        )
+        history_text = format_history(
+            history, captions=caption_map, forwards=history_forwards
+        )
         history_map = {
             index: {"id": message.message_id, "sender_id": message.sender_id}
             for index, message in enumerate(history, start=1)

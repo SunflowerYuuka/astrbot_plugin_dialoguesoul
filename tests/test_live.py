@@ -9,6 +9,7 @@ install_astrbot_stub()
 
 from dialoguesoul.context.live import (
     build_caption_service,
+    build_forward_renderer,
     build_interest_judge,
     build_intervention_judge,
     build_summary_service,
@@ -241,6 +242,53 @@ class LiveServiceTest(unittest.IsolatedAsyncioTestCase):
         judge = build_intervention_judge(context, config)
 
         self.assertFalse(await judge(event, "最近聊天"))
+
+    async def test_forward_renderer_only_built_when_something_is_enabled(self):
+        event = types.SimpleNamespace(unified_msg_origin="umo")
+
+        # 两者都关闭时不应构建，避免每条消息都多一次判断成本
+        self.assertIsNone(
+            build_forward_renderer(
+                event, {"context": {"forward": {"parse": False, "history_messages": 0}}}
+            )
+        )
+
+        # 只开历史展开也要能构建，否则历史转发永远读不到
+        renderer = build_forward_renderer(
+            event, {"context": {"forward": {"parse": False, "history_messages": 5}}}
+        )
+        self.assertIsNotNone(renderer)
+
+        renderer = build_forward_renderer(
+            event, {"context": {"forward": {"parse": True, "history_messages": 0}}}
+        )
+        self.assertIsNotNone(renderer)
+
+    async def test_forward_renderer_wires_captioner_when_configured(self):
+        event = types.SimpleNamespace(unified_msg_origin="umo")
+        provider = Provider("一只猫")
+        service = build_caption_service(
+            Context(by_id=provider),
+            {
+                "context": {
+                    "image_caption": {"enabled": True, "provider_id": "vision"}
+                }
+            },
+        )
+        config = {
+            "context": {
+                "forward": {"parse": True, "caption_images": True},
+                "image_caption": {"enabled": True},
+            }
+        }
+
+        renderer = build_forward_renderer(event, config, caption_service=service)
+        self.assertIsNotNone(renderer.captioner)
+
+        config["context"]["forward"]["caption_images"] = False
+        self.assertIsNone(
+            build_forward_renderer(event, config, caption_service=service).captioner
+        )
 
     async def test_caption_provider_errors_are_skipped(self):
         context = Context(by_id=FailingProvider())

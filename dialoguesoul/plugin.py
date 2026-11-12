@@ -236,7 +236,9 @@ class DialoguesSoulPlugin:
                 wake_session=route.wake_session,
                 context=self.context,
                 decision_format=cfg.get(self.config, "decision.format", "marker"),
-                forward_renderer=build_forward_renderer(event, self.config),
+                forward_renderer=build_forward_renderer(
+                    event, self.config, caption_service=self.builder.caption_service
+                ),
                 summary_service=self.summary_service,
                 wake_starts=starts_session,
                 wake_limits=limits,

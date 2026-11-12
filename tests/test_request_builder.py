@@ -404,6 +404,49 @@ class RequestBuilderTest(unittest.IsolatedAsyncioTestCase):
         built = await self._build(_builder(), PrivateEvent(), _base_config())
         self.assertEqual(built.request.prompt, "hello")
 
+    async def test_history_forwards_are_rendered_when_window_enabled(self):
+        history = [
+            ChatMessage(
+                "p", "bot", "group", "1", f"m{i}", "u", "U", float(i),
+                [{"type": "plain", "text": "看这个"}, {"type": "forward", "id": f"f{i}"}],
+            )
+            for i in range(3)
+        ]
+        renderer = FakeForward("甲: 转发正文")
+        config = _base_config()
+        config["context"]["forward"] = {"parse": False, "history_messages": 2}
+
+        built = await self._build(
+            _builder(repo=FakeRepo(history), forward_renderer=renderer),
+            FakeEvent(),
+            config,
+        )
+
+        # 只展开最近 2 条历史里的转发，且正文进到聊天记录
+        self.assertEqual(sorted(renderer.calls), ["f1", "f2"])
+        self.assertIn("甲: 转发正文", built.request.system_prompt)
+        self.assertNotIn("f0", built.request.system_prompt)
+
+    async def test_history_forwards_not_rendered_by_default(self):
+        history = [
+            ChatMessage(
+                "p", "bot", "group", "1", "m0", "u", "U", 0.0,
+                [{"type": "forward", "id": "f0"}],
+            )
+        ]
+        renderer = FakeForward()
+        config = _base_config()
+        config["context"]["forward"] = {"parse": False}
+
+        built = await self._build(
+            _builder(repo=FakeRepo(history), forward_renderer=renderer),
+            FakeEvent(),
+            config,
+        )
+
+        self.assertEqual(renderer.calls, [])
+        self.assertIn("[合并转发]", built.request.system_prompt)
+
     async def test_forward_is_rendered_when_enabled(self):
         forward = _Forward(id="f1")
         renderer = FakeForward()

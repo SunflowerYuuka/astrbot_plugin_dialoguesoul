@@ -71,6 +71,8 @@ DEFAULTS: dict[str, Any] = {
         },
         "forward": {
             "parse": False,
+            "history_messages": 0,
+            "caption_images": False,
             "max_depth": 2,
             "max_nodes": 50,
             "max_chars": 2000,
